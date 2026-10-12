@@ -73,6 +73,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub)
 	monitoringService := service.NewMonitoringService(monitoringRepo)
 	monitoringHandler := handler.NewMonitoringHandler(monitoringService, monitoringRepo)
 
+	dashboardConfigRepo := repository.NewDashboardConfigRepository(db)
+	dashboardConfigService := service.NewDashboardConfigService(dashboardConfigRepo)
+	dashboardConfigHandler := handler.NewDashboardConfigHandler(dashboardConfigService)
+
 	moduleRepo := repository.NewModuleRepository(db)
 	permissionRepo := repository.NewPermissionRepository(db)
 	rbacHandler := handler.NewRBACHandler(moduleRepo, permissionRepo, hub)
@@ -154,6 +158,13 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub)
 				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "monitoring", model.AccessView))
 				r.Get("/monitoring", monitoringHandler.GetDashboard)
 				r.Get("/monitoring/debug/pharmacy", monitoringHandler.DebugPharmacy)
+				r.Get("/dashboard/configs/monthly-revenue-target", dashboardConfigHandler.GetMonthlyRevenueTarget)
+			})
+
+			// Dashboard config update - hanya admin/leader (editor access)
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "monitoring", model.AccessEditor))
+				r.Put("/dashboard/configs/monthly-revenue-target", dashboardConfigHandler.UpdateMonthlyRevenueTarget)
 			})
 
 			// Laporan & KPI dijaga modul RBAC "reports" — default staff_it/
