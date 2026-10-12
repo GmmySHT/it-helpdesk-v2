@@ -21,7 +21,7 @@ func (r *DashboardConfigRepository) GetConfig(ctx context.Context, key string) (
 	var value string
 	err := r.pool.QueryRow(
 		ctx,
-		"SELECT config_value FROM dashboard_configs WHERE config_key = $1",
+		"SELECT config_value FROM app_settings WHERE config_key = $1",
 		key,
 	).Scan(&value)
 	if err == sql.ErrNoRows {
@@ -37,7 +37,7 @@ func (r *DashboardConfigRepository) GetConfig(ctx context.Context, key string) (
 func (r *DashboardConfigRepository) SetConfig(ctx context.Context, key, value string) error {
 	_, err := r.pool.Exec(
 		ctx,
-		`INSERT INTO dashboard_configs (config_key, config_value) 
+		`INSERT INTO app_settings (config_key, config_value) 
 		 VALUES ($1, $2) 
 		 ON CONFLICT (config_key) DO UPDATE SET config_value = $2, updated_at = CURRENT_TIMESTAMP`,
 		key, value,
@@ -47,7 +47,7 @@ func (r *DashboardConfigRepository) SetConfig(ctx context.Context, key, value st
 
 // GetAllConfigs mengambil semua config
 func (r *DashboardConfigRepository) GetAllConfigs(ctx context.Context) (map[string]string, error) {
-	rows, err := r.pool.Query(ctx, "SELECT config_key, config_value FROM dashboard_configs")
+	rows, err := r.pool.Query(ctx, "SELECT config_key, config_value FROM app_settings")
 	if err != nil {
 		return nil, err
 	}

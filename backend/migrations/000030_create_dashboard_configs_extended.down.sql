@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS dashboard_configs;
+DROP TABLE IF EXISTS app_settings;
