@@ -1,0 +1,1 @@
+TRUNCATE sla_rules;

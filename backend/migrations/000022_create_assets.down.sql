@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS assets CASCADE;
+DROP TYPE IF EXISTS asset_condition;

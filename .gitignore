@@ -1,0 +1,47 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+go.sum
+vendor/
+
+# Uploads & temp
+uploads/
+tmp-api.exe
+.DS_Store
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Old/backup
+internal-old/
+migrations-old/
+*.zip
+*-old/
+
+# Database
+pgdata/
+
+# OS
+Thumbs.db

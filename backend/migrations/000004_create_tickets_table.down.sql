@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS tickets;
+DROP TYPE IF EXISTS claim_type;
+DROP TYPE IF EXISTS ticket_status;
