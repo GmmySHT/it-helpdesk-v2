@@ -1,0 +1,19 @@
+# Rahasia & konfigurasi lokal
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Hasil build & berkas biner
+bin/
+*.exe
+
+# Data yang diunggah pengguna
+uploads/
+
+# Sisa lama / arsip
+internal-old/
+migrations-old/
+internal_x/
+*.zip
+{cmd/

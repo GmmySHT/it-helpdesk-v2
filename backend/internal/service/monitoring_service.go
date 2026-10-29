@@ -16,6 +16,19 @@ func NewMonitoringService(repo *repository.MonitoringRepository) *MonitoringServ
 }
 
 func (s *MonitoringService) GetExecutiveDashboardData(ctx context.Context, per model.Period) (map[string]interface{}, error) {
+	// Tanpa koneksi SIMRS, JANGAN kirim data palsu dan JANGAN gagalkan
+	// request: balas payload kosong + peringatan, supaya halaman Monitoring
+	// tetap tampil dan hanya menampilkan banner "database tidak terkoneksi".
+	// Konfigurasi dashboard tetap diambil dari database aplikasi sendiri.
+	if !s.repo.SIMRSAvailable() {
+		config, _ := s.repo.GetConfig(ctx, "executive-monitoring")
+		return map[string]interface{}{
+			"config":          config,
+			"simrs_connected": false,
+			"warning":         "Database SIMRS tidak terkoneksi. Data monitoring belum dapat ditampilkan.",
+		}, nil
+	}
+
 	config, _ := s.repo.GetConfig(ctx, "executive-monitoring")
 	stats, _ := s.repo.GetRealtimeStats(ctx, per)
 	patients, _ := s.repo.GetPatientStats(ctx, per)
@@ -32,6 +45,7 @@ func (s *MonitoringService) GetExecutiveDashboardData(ctx context.Context, per m
 	pharmacyRooms, _ := s.repo.GetPharmacyRoomStats(ctx, per)
 
 	return map[string]interface{}{
+		"simrs_connected":  true,
 		"config":           config,
 		"stats":            stats,
 		"patients":         patients,

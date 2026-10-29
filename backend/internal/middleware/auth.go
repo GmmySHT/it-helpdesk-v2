@@ -18,10 +18,10 @@ const (
 	ContextRole   contextKey = "role"
 )
 
-// Auth memvalidasi JWT dari header Authorization: Bearer <token>.
-// Kalau valid, user_id dan role disisipkan ke context supaya handler
-// berikutnya bisa langsung memakainya tanpa parse ulang token.
-func Auth(authService *service.AuthService) func(http.Handler) http.Handler {
+// Auth memvalidasi JWT dari header Authorization: Bearer <token>, lalu
+// memastikan akunnya masih aktif lewat SessionChecker. Role yang disisipkan
+// ke context adalah role TERBARU dari database (bukan dari isi token).
+func Auth(authService *service.AuthService, checker *SessionChecker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -37,8 +37,20 @@ func Auth(authService *service.AuthService) func(http.Handler) http.Handler {
 				return
 			}
 
+			role, status := checker.Check(r.Context(), claims.UserID)
+			switch status {
+			case SessionInvalid:
+				respondUnauthorized(w, "akun tidak aktif atau tidak ditemukan")
+				return
+			case SessionError:
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{"error": "layanan sementara tidak tersedia, coba lagi"})
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), ContextUserID, claims.UserID)
-			ctx = context.WithValue(ctx, ContextRole, claims.Role)
+			ctx = context.WithValue(ctx, ContextRole, role)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

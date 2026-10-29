@@ -2,6 +2,7 @@ package router
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -16,6 +17,16 @@ import (
 	"ticketing-it/backend/internal/ws"
 )
 
+// Options berisi pengaturan yang berasal dari konfigurasi/environment.
+type Options struct {
+	JWTSecret string
+	// AllowedOrigins = origin frontend yang boleh memanggil API (CORS) dan
+	// membuka WebSocket.
+	AllowedOrigins []string
+	// AllowPublicRegistration membuka POST /auth/register (default mati).
+	AllowPublicRegistration bool
+}
+
 // New membangun router utama aplikasi beserta seluruh middleware dan route.
 // hub diterima dari main.go supaya instance-nya sama dengan yang dipakai
 // untuk push notifikasi real-time di seluruh service.
@@ -23,36 +34,50 @@ import (
 // TicketService dikembalikan juga (bukan cuma http.Handler) supaya main.go
 // bisa memakainya untuk menjalankan background job (reminder SLA) di luar
 // siklus request HTTP biasa.
-func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub) (http.Handler, *service.TicketService) {
+func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (http.Handler, *service.TicketService) {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
+	// RealIP mempercayai header X-Forwarded-For/X-Real-IP. Aman HANYA kalau
+	// backend dijalankan di belakang reverse proxy dan port backend tidak
+	// bisa diakses langsung dari luar (lihat DEPLOY.md).
 	r.Use(chimiddleware.RealIP)
-	r.Use(chimiddleware.Logger)
+	r.Use(appmiddleware.AccessLog) // pengganti chimiddleware.Logger: tidak mencatat ?token=
 	r.Use(chimiddleware.Recoverer)
+	r.Use(appmiddleware.SecurityHeaders)
+	r.Use(appmiddleware.LimitBody(1<<20, 50<<20)) // JSON maks 1 MB, upload maks 50 MB
 
-	// CORS dibuka untuk origin frontend Next.js saat development.
-	// Ganti AllowedOrigins ke domain production sebelum deploy.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedOrigins:   opts.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
+		MaxAge:           300,
 	}))
 
 	healthHandler := handler.NewHealthHandler(db)
 	r.Get("/health", healthHandler.Check)
 
 	userRepo := repository.NewUserRepository(db)
-	authService := service.NewAuthService(jwtSecret)
+	authService := service.NewAuthService(opts.JWTSecret)
 	userService := service.NewUserService(userRepo, authService)
-	authHandler := handler.NewAuthHandler(userService)
+
+	// SessionChecker: pastikan akun di balik token masih aktif & pakai role
+	// terbaru (cache 15 detik). Anti brute-force login: 5 kegagalan per akun
+	// atau 30 per IP dalam 15 menit -> dikunci 15 menit.
+	sessionChecker := appmiddleware.NewSessionChecker(userRepo, 15*time.Second)
+	idLimiter := appmiddleware.NewLoginLimiter(5, 15*time.Minute, 15*time.Minute)
+	ipLimiter := appmiddleware.NewLoginLimiter(30, 15*time.Minute, 15*time.Minute)
 
 	notifRepo := repository.NewNotificationRepository(db)
 	notifService := service.NewNotificationService(notifRepo, hub)
 	notifHandler := handler.NewNotificationHandler(notifService)
 
-	wsHandler := handler.NewWSHandler(authService, hub)
+	// Saat akun terkunci: catat di log + notifikasi ke pemilik akun dan admin/leader.
+	securityAlertService := service.NewSecurityAlertService(userRepo, notifService)
+	authHandler := handler.NewAuthHandler(userService, idLimiter, ipLimiter, securityAlertService)
+
+	wsHandler := handler.NewWSHandler(authService, hub, opts.AllowedOrigins, sessionChecker)
 
 	ticketRepo := repository.NewTicketRepository(db)
 	slaRuleRepo := repository.NewSLARuleRepository(db)
@@ -84,7 +109,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub)
 	ratingRepo := repository.NewRatingRepository(db)
 	ratingHandler := handler.NewRatingHandler(ratingRepo, ticketRepo)
 
-	commentHandler := handler.NewCommentHandler(commentRepo)
+	commentHandler := handler.NewCommentHandler(commentRepo, ticketRepo, userRepo, notifService)
 	uploadHandler := handler.NewUploadHandler()
 
 	// Asset management repositories & services
@@ -98,10 +123,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub)
 
 	assetHandler := handler.NewAssetHandler(assetService, assetBorrowingService, assetDisposalService)
 
-	// Static file server untuk gambar bukti resolve yang di-upload staf.
-	// Contoh akses: http://localhost:8080/uploads/xxx.jpg
-	fileServer := http.FileServer(http.Dir("./uploads"))
-	r.Handle("/uploads/*", http.StripPrefix("/uploads/", fileServer))
+	// Gambar yang diunggah (bukti resolve & gambar di teks kaya). Hanya file
+	// gambar yang dilayani, tanpa daftar folder, dengan header anti-eksekusi
+	// — lihat uploads.go.
+	r.Handle("/uploads/*", uploadsHandler("./uploads"))
 
 	// Endpoint WebSocket TIDAK dipasang di dalam grup appmiddleware.Auth,
 	// karena otentikasinya sendiri dilakukan di dalam WSHandler.ServeWS
@@ -109,16 +134,20 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub)
 	r.Get("/ws", wsHandler.ServeWS)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/auth/register", authHandler.Register)
+		// Registrasi publik MATI secara default (ALLOW_PUBLIC_REGISTRATION=false):
+		// akun dibuat leader/admin lewat Manajemen User. Kalau tidak dipasang,
+		// endpoint ini menjawab 404/405.
+		if opts.AllowPublicRegistration {
+			r.Post("/auth/register", authHandler.Register)
+		}
 		r.Post("/auth/login", authHandler.Login)
 
 		// Route yang butuh login dipasang di dalam grup ini.
 		r.Group(func(r chi.Router) {
-			r.Use(appmiddleware.Auth(authService))
+			r.Use(appmiddleware.Auth(authService, sessionChecker))
 
 			r.Post("/tickets", ticketHandler.Create)
 			r.Get("/tickets", ticketHandler.List)
-			r.Get("/tickets/at-risk", ticketHandler.AtRisk)
 			r.Get("/tickets/{id}", ticketHandler.GetByID)
 			r.Post("/tickets/{id}/claim", ticketHandler.Claim)
 			r.Post("/tickets/{id}/resolve", ticketHandler.Resolve)
@@ -146,18 +175,23 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, jwtSecret string, hub *ws.Hub)
 				r.Patch("/admin/users/{id}/status", userHandler.SetActive)
 				r.Delete("/admin/users/{id}", userHandler.Delete)
 			})
-			r.Get("/stats/summary", statsHandler.Summary)
-			r.Get("/stats/staff-performance", statsHandler.StaffPerformance)
+			// Statistik tim & tiket berisiko: hanya staff IT, leader, admin.
+			// Role 'user' (pelapor) tidak punya alasan melihat data tim.
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireRole(model.RoleStaffIT, model.RoleLeader, model.RoleAdmin))
+				r.Get("/tickets/at-risk", ticketHandler.AtRisk)
+				r.Get("/stats/summary", statsHandler.Summary)
+				r.Get("/stats/staff-performance", statsHandler.StaffPerformance)
+				r.Get("/stats/trend", statsHandler.Trend)
+			})
 			r.Get("/stats/my-performance", statsHandler.MyPerformance)
 			r.Get("/stats/my-creator-stats", statsHandler.MyCreatorStats)
-			r.Get("/stats/trend", statsHandler.Trend)
 			r.Get("/stats/my-status-breakdown", statsHandler.MyStatusBreakdown)
 			r.Get("/stats/my-trend", statsHandler.MyTrend)
 			r.Get("/stats/my-priority-breakdown", statsHandler.MyPriorityBreakdown)
 			r.Group(func(r chi.Router) {
 				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "monitoring", model.AccessView))
 				r.Get("/monitoring", monitoringHandler.GetDashboard)
-				r.Get("/monitoring/debug/pharmacy", monitoringHandler.DebugPharmacy)
 				r.Get("/dashboard/configs/monthly-revenue-target", dashboardConfigHandler.GetMonthlyRevenueTarget)
 			})
 

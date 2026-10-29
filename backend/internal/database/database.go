@@ -19,6 +19,7 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	// Pastikan koneksi benar-benar hidup saat startup, bukan baru ketahuan
 	// error saat request pertama masuk.
 	if err := pool.Ping(ctx); err != nil {
+		pool.Close() // jangan biarkan pool menggantung kalau koneksi awal gagal
 		return nil, fmt.Errorf("gagal ping database: %w", err)
 	}
 

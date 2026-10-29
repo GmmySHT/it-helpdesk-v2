@@ -1,0 +1,45 @@
+# Contoh reverse proxy Caddy (satu domain untuk frontend + API + WebSocket).
+# Ganti helpdesk.contoh-rs.id dengan domain Anda.
+#
+# - Domain publik: Caddy mengurus sertifikat HTTPS (Let's Encrypt) otomatis.
+# - Jaringan internal RS tanpa domain publik: pakai sertifikat dari CA internal:
+#       tls C:\certs\helpdesk.crt C:\certs\helpdesk.key
+#   atau  tls internal   (sertifikat CA lokal Caddy; pasang CA-nya di komputer klien)
+
+helpdesk.contoh-rs.id {
+	encode gzip
+
+	# Batas ukuran upload (sejalan dengan batas 50 MB di backend)
+	request_body {
+		max_size 50MB
+	}
+
+	# Jangan catat token WebSocket (?token=...) di log akses
+	log {
+		output file C:\caddy\logs\access.log
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete token
+				}
+			}
+		}
+	}
+
+	# Backend Go (API, WebSocket, gambar unggahan)
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /uploads/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Frontend Next.js
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

@@ -81,6 +81,22 @@ func (h *RatingHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *RatingHandler) GetByTicket(w http.ResponseWriter, r *http.Request) {
 	ticketID := chi.URLParam(r, "id")
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	role, _ := r.Context().Value(appmiddleware.ContextRole).(model.UserRole)
+
+	ticket, err := h.ticketRepo.FindByID(r.Context(), ticketID)
+	if err != nil {
+		if errors.Is(err, repository.ErrTicketNotFound) {
+			respondError(w, http.StatusNotFound, "tiket tidak ditemukan")
+			return
+		}
+		respondInternal(w, err, "gagal mengambil tiket")
+		return
+	}
+	if !canAccessTicket(role, userID, ticket) {
+		respondError(w, http.StatusNotFound, "tiket tidak ditemukan")
+		return
+	}
 
 	rating, err := h.ratingRepo.FindByTicket(r.Context(), ticketID)
 	if err != nil {

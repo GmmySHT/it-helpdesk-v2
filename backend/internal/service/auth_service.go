@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -46,9 +47,13 @@ func (s *AuthService) ParseToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 		return s.jwtSecret, nil
-	})
-	if err != nil || !token.Valid {
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil {
 		return nil, err
+	}
+	// Token tanpa masa berlaku tidak pernah dibuat aplikasi ini — tolak.
+	if !token.Valid || claims.UserID == "" || claims.ExpiresAt == nil {
+		return nil, errors.New("token tidak valid")
 	}
 	return claims, nil
 }

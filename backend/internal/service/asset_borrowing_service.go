@@ -38,6 +38,34 @@ func (s *AssetBorrowingService) Create(ctx context.Context, borrowing *model.Ass
 	return nil
 }
 
+// actorLabel menyusun nama pelaku untuk teks notifikasi, mis. "Rina (Leader)".
+// Sebelumnya teks notifikasi menulis "admin" secara permanen, padahal yang
+// menyetujui/menolak bisa leader atau staff IT.
+func (s *AssetBorrowingService) actorLabel(ctx context.Context, userID string) string {
+	const fallback = "petugas IT"
+	if s.userRepo == nil || userID == "" {
+		return fallback
+	}
+	u, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil || u == nil {
+		return fallback
+	}
+
+	role := ""
+	switch u.Role {
+	case model.RoleLeader:
+		role = "Leader"
+	case model.RoleStaffIT:
+		role = "Staff IT"
+	case model.RoleAdmin:
+		role = "Admin"
+	}
+	if role == "" {
+		return u.Name
+	}
+	return u.Name + " (" + role + ")"
+}
+
 // Approve menyetujui peminjaman dan push notifikasi ke borrower.
 func (s *AssetBorrowingService) Approve(ctx context.Context, id string, approvedBy string) error {
 	borrowing, err := s.repo.GetByID(ctx, id)
@@ -53,14 +81,14 @@ func (s *AssetBorrowingService) Approve(ctx context.Context, id string, approved
 	if s.notifService != nil && s.hub != nil {
 		s.notifService.Notify(ctx, borrowing.BorrowerID, nil, "asset_borrowing_approved",
 			"Peminjaman Aset Disetujui",
-			"Peminjaman aset "+borrowing.AssetName+" telah disetujui oleh admin.")
+			"Peminjaman aset "+borrowing.AssetName+" telah disetujui oleh "+s.actorLabel(ctx, approvedBy)+".")
 	}
 
 	return nil
 }
 
 // Reject menolak peminjaman dan push notifikasi ke borrower.
-func (s *AssetBorrowingService) Reject(ctx context.Context, id string) error {
+func (s *AssetBorrowingService) Reject(ctx context.Context, id string, rejectedBy string) error {
 	borrowing, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -73,7 +101,7 @@ func (s *AssetBorrowingService) Reject(ctx context.Context, id string) error {
 	if s.notifService != nil && s.hub != nil {
 		s.notifService.Notify(ctx, borrowing.BorrowerID, nil, "asset_borrowing_rejected",
 			"Peminjaman Aset Ditolak",
-			"Peminjaman aset "+borrowing.AssetName+" telah ditolak oleh admin.")
+			"Peminjaman aset "+borrowing.AssetName+" telah ditolak oleh "+s.actorLabel(ctx, rejectedBy)+".")
 	}
 
 	return nil

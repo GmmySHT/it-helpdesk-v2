@@ -3,16 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	appmiddleware "ticketing-it/backend/internal/middleware"
 	"ticketing-it/backend/internal/model"
@@ -132,6 +128,15 @@ func (h *TicketHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pelapor hanya boleh melihat tiketnya sendiri. 404 (bukan 403) supaya
+	// keberadaan tiket orang lain tidak terungkap lewat tebakan id.
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	role, _ := r.Context().Value(appmiddleware.ContextRole).(model.UserRole)
+	if !canAccessTicket(role, userID, ticket) {
+		respondError(w, http.StatusNotFound, "tiket tidak ditemukan")
+		return
+	}
+
 	respondJSON(w, http.StatusOK, ticket)
 }
 
@@ -154,6 +159,7 @@ func (h *TicketHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, repository.ErrTicketAlreadyClaimed):
 			respondError(w, http.StatusConflict, err.Error())
 		default:
+			respondInternal(w, err, "gagal klaim tiket")
 		}
 		return
 	}
@@ -194,7 +200,11 @@ func (h *TicketHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	for _, fileHeader := range files {
 		url, err := saveUploadedFile(fileHeader)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "gagal menyimpan file: "+err.Error())
+			if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrImageTooLarge) {
+				respondError(w, http.StatusBadRequest, fileHeader.Filename+": "+err.Error())
+				return
+			}
+			respondInternal(w, err, "gagal menyimpan file")
 			return
 		}
 		savedURLs = append(savedURLs, url)
@@ -213,7 +223,7 @@ func (h *TicketHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrResolveNeedsAttachment):
 			respondError(w, http.StatusBadRequest, err.Error())
 		default:
-			respondError(w, http.StatusInternalServerError, "gagal resolve tiket: "+err.Error())
+			respondInternal(w, err, "gagal resolve tiket")
 		}
 		return
 	}
@@ -221,8 +231,8 @@ func (h *TicketHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, ticket)
 }
 
-// saveUploadedFile menyimpan satu file ke disk dengan nama unik (UUID + ekstensi asli)
-// supaya tidak ada file yang saling menimpa kalau ada dua staf upload file bernama sama.
+// saveUploadedFile menyimpan satu lampiran. Isinya divalidasi (harus gambar
+// sungguhan, maks 10 MB) dan nama file dibuat acak — lihat saveValidatedImage.
 func saveUploadedFile(fileHeader *multipart.FileHeader) (string, error) {
 	src, err := fileHeader.Open()
 	if err != nil {
@@ -230,23 +240,7 @@ func saveUploadedFile(fileHeader *multipart.FileHeader) (string, error) {
 	}
 	defer src.Close()
 
-	ext := filepath.Ext(fileHeader.Filename)
-	newFileName := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-	destPath := filepath.Join(uploadDir, newFileName)
-
-	dst, err := os.Create(destPath)
-	if err != nil {
-		return "", err
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		return "", err
-	}
-
-	// URL relatif ini dipakai frontend sebagai <img src="http://localhost:8080/uploads/xxx.jpg" />
-	// setelah di-serve lewat static file handler di router.
-	return "/uploads/" + newFileName, nil
+	return saveValidatedImage(src)
 }
 
 func (h *TicketHandler) Close(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +298,7 @@ func (h *TicketHandler) Reopen(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, repository.ErrTicketNotResolvable):
 			respondError(w, http.StatusConflict, "tiket hanya bisa direopen dari status 'resolved'")
 		default:
-			respondError(w, http.StatusInternalServerError, "gagal reopen tiket: "+err.Error())
+			respondInternal(w, err, "gagal reopen tiket")
 		}
 		return
 	}
@@ -350,7 +344,7 @@ func (h *TicketHandler) Reassign(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrTicketNotClaimedYet):
 			respondError(w, http.StatusConflict, err.Error())
 		default:
-			respondError(w, http.StatusInternalServerError, "gagal reassign tiket: "+err.Error())
+			respondInternal(w, err, "gagal reassign tiket")
 		}
 		return
 	}
@@ -399,7 +393,7 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrTicketNotPendingApproval):
 			respondError(w, http.StatusConflict, err.Error())
 		default:
-			respondError(w, http.StatusInternalServerError, "gagal menyetujui tiket: "+err.Error())
+			respondInternal(w, err, "gagal menyetujui tiket")
 		}
 		return
 	}
@@ -439,7 +433,7 @@ func (h *TicketHandler) Reject(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrTicketNotPendingApproval):
 			respondError(w, http.StatusConflict, err.Error())
 		default:
-			respondError(w, http.StatusInternalServerError, "gagal menolak tiket: "+err.Error())
+			respondInternal(w, err, "gagal menolak tiket")
 		}
 		return
 	}

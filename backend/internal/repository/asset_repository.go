@@ -10,6 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Error khusus aset — dipakai handler untuk memilih kode HTTP yang tepat
+// (404 / 409) alih-alih 500 mentah dari database.
+var (
+	ErrAssetNotFound  = errors.New("asset not found")
+	ErrAssetDuplicate = errors.New("kode aset atau serial number sudah dipakai aset lain")
+	ErrAssetInUse     = errors.New("aset masih punya riwayat peminjaman atau pembuangan")
+)
+
 type AssetRepository struct {
 	db *pgxpool.Pool
 }
@@ -57,7 +65,7 @@ func (r *AssetRepository) GetByID(ctx context.Context, id string) (*model.Asset,
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, errors.New("asset not found")
+			return nil, ErrAssetNotFound
 		}
 		return nil, err
 	}
@@ -141,9 +149,11 @@ func (r *AssetRepository) List(ctx context.Context, categoryID string, condition
 
 // Update mengubah data aset.
 func (r *AssetRepository) Update(ctx context.Context, id string, asset *model.Asset) error {
+	// serial_number memakai NULLIF supaya string kosong disimpan sebagai NULL
+	// (kolomnya UNIQUE — dua aset tanpa serial tidak boleh bentrok di '').
 	query := `
 		UPDATE assets
-		SET category_id=$1, code=$2, name=$3, brand=$4, model=$5, serial_number=$6,
+		SET category_id=$1, code=$2, name=$3, brand=$4, model=$5, serial_number=NULLIF($6, ''),
 		    condition=$7, stock=$8, location=$9, notes=$10, updated_at=NOW()
 		WHERE id=$11
 		RETURNING updated_at
@@ -154,14 +164,32 @@ func (r *AssetRepository) Update(ctx context.Context, id string, asset *model.As
 		asset.SerialNumber, asset.Condition, asset.Stock, asset.Location,
 		asset.Notes, id,
 	).Scan(&asset.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAssetNotFound
+		}
+		if pgErrCode(err) == "23505" { // unique_violation (code / serial_number)
+			return ErrAssetDuplicate
+		}
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // Delete menghapus aset.
 func (r *AssetRepository) Delete(ctx context.Context, id string) error {
-	_, err := r.db.Exec(ctx, "DELETE FROM assets WHERE id = $1", id)
-	return err
+	tag, err := r.db.Exec(ctx, "DELETE FROM assets WHERE id = $1", id)
+	if err != nil {
+		if pgErrCode(err) == "23503" { // foreign_key_violation (asset_borrowings / asset_disposals)
+			return ErrAssetInUse
+		}
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAssetNotFound
+	}
+	return nil
 }
 
 // GetCategoryByID mengambil kategori by ID.

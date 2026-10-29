@@ -2,9 +2,26 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strings"
+
 	"ticketing-it/backend/internal/model"
 	"ticketing-it/backend/internal/repository"
 )
+
+// AssetValidationError membawa pesan yang aman ditampilkan langsung ke user.
+type AssetValidationError struct{ Message string }
+
+func (e *AssetValidationError) Error() string { return e.Message }
+
+var validAssetConditions = map[model.AssetCondition]bool{
+	model.AssetConditionAvailable:        true,
+	model.AssetConditionBorrowed:         true,
+	model.AssetConditionNeedsRepair:      true,
+	model.AssetConditionBroken:           true,
+	model.AssetConditionAwaitingDisposal: true,
+	model.AssetConditionDisposed:         true,
+}
 
 type AssetService struct {
 	repo *repository.AssetRepository
@@ -36,8 +53,42 @@ func (s *AssetService) List(ctx context.Context, categoryID string, condition st
 	return assets, total, nil
 }
 
-// Update mengubah data aset.
+// Update mengubah data aset. Semua field dikirim ulang oleh frontend
+// (bukan partial update), jadi di sini divalidasi lengkap.
 func (s *AssetService) Update(ctx context.Context, id string, asset *model.Asset) error {
+	asset.CategoryID = strings.TrimSpace(asset.CategoryID)
+	asset.Code = strings.TrimSpace(asset.Code)
+	asset.Name = strings.TrimSpace(asset.Name)
+	asset.Brand = strings.TrimSpace(asset.Brand)
+	asset.Model = strings.TrimSpace(asset.Model)
+	asset.SerialNumber = strings.TrimSpace(asset.SerialNumber)
+	asset.Location = strings.TrimSpace(asset.Location)
+	asset.Notes = strings.TrimSpace(asset.Notes)
+
+	if asset.CategoryID == "" || asset.Code == "" || asset.Name == "" {
+		return &AssetValidationError{"kategori, kode, dan nama aset wajib diisi"}
+	}
+	if !validAssetConditions[asset.Condition] {
+		return &AssetValidationError{"kondisi aset tidak valid"}
+	}
+	if asset.Stock < 0 {
+		return &AssetValidationError{"stok tidak boleh negatif"}
+	}
+
+	// Pastikan aset ada, sekaligus cek stok baru tidak lebih kecil dari
+	// jumlah yang sedang diajukan/disetujui/dipinjam.
+	if _, err := s.repo.GetByID(ctx, id); err != nil {
+		return err
+	}
+	borrowed, err := s.repo.GetTotalBorrowed(ctx, id)
+	if err != nil {
+		return err
+	}
+	if int64(asset.Stock) < borrowed {
+		return &AssetValidationError{fmt.Sprintf(
+			"stok tidak boleh kurang dari %d unit yang sedang diajukan/dipinjam", borrowed)}
+	}
+
 	return s.repo.Update(ctx, id, asset)
 }
 

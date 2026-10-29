@@ -2,12 +2,14 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 	"ticketing-it/backend/internal/middleware"
 	"ticketing-it/backend/internal/model"
+	"ticketing-it/backend/internal/repository"
 	"ticketing-it/backend/internal/service"
 
 	"github.com/go-chi/chi/v5"
@@ -44,7 +46,7 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
 		return
 	}
 
@@ -65,7 +67,7 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.assetService.Create(r.Context(), asset); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -78,7 +80,7 @@ func (h *AssetHandler) GetAsset(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	asset, err := h.assetService.GetByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		respondError(w, http.StatusNotFound, "aset tidak ditemukan")
 		return
 	}
 
@@ -98,7 +100,7 @@ func (h *AssetHandler) ListAssets(w http.ResponseWriter, r *http.Request) {
 
 	assets, total, err := h.assetService.List(r.Context(), categoryID, condition, limit, offset)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -126,7 +128,7 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
 		return
 	}
 
@@ -144,21 +146,40 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.assetService.Update(r.Context(), id, asset); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondAssetError(w, err, "gagal menyimpan perubahan aset")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(asset)
+	asset.ID = id
+	respondJSON(w, http.StatusOK, asset)
 }
 
 func (h *AssetHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := h.assetService.Delete(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondAssetError(w, err, "gagal menghapus aset")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// respondAssetError memetakan error edit/hapus aset ke kode HTTP + pesan
+// yang bisa langsung ditampilkan frontend (format {"error": "..."}).
+func respondAssetError(w http.ResponseWriter, err error, fallback string) {
+	var validationErr *service.AssetValidationError
+	switch {
+	case errors.As(err, &validationErr):
+		respondError(w, http.StatusBadRequest, validationErr.Message)
+	case errors.Is(err, repository.ErrAssetNotFound):
+		respondError(w, http.StatusNotFound, "aset tidak ditemukan")
+	case errors.Is(err, repository.ErrAssetDuplicate):
+		respondError(w, http.StatusConflict, "kode aset atau serial number sudah dipakai aset lain")
+	case errors.Is(err, repository.ErrAssetInUse):
+		respondError(w, http.StatusConflict,
+			"aset tidak bisa dihapus karena sudah punya riwayat peminjaman atau pembuangan; ubah kondisinya saja (mis. Tunggu Pembuangan)")
+	default:
+		respondError(w, http.StatusInternalServerError, fallback)
+	}
 }
 
 // --- Categories ---
@@ -166,7 +187,7 @@ func (h *AssetHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 func (h *AssetHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
 	categories, err := h.assetService.ListCategories(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -181,7 +202,7 @@ func (h *AssetHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
 		return
 	}
 
@@ -189,7 +210,7 @@ func (h *AssetHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	// TODO: move to service
 	// TODO: implement CreateCategory in AssetService
 	// For now return placeholder
-	http.Error(w, "CreateCategory not yet implemented", http.StatusNotImplemented)
+	respondError(w, http.StatusNotImplemented, "fitur ini belum tersedia")
 	return
 }
 
@@ -206,31 +227,41 @@ func (h *AssetHandler) BorrowAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
 		return
 	}
 
 	if req.Purpose == "" {
-		http.Error(w, "tujuan peminjaman wajib diisi", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Tujuan peminjaman wajib diisi.")
 		return
 	}
 	if req.Quantity < 1 {
-		http.Error(w, "jumlah minimal 1", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Jumlah minimal 1 unit.")
 		return
 	}
 
 	// Validasi stok tersedia vs jumlah yang diminta
-	// (cegah user pinjam melebihi available_stock)
+	// (cegah user pinjam melebihi available_stock).
+	// Pesan memakai respondError ({"error": "..."}) supaya frontend bisa
+	// menampilkannya apa adanya — http.Error (teks biasa) tidak terbaca
+	// frontend dan berujung "Request gagal dengan status 422".
 	available, err := h.assetService.GetAvailableStock(r.Context(), assetID)
 	if err != nil {
-		http.Error(w, "gagal mengecek stok aset", http.StatusInternalServerError)
+		if errors.Is(err, repository.ErrAssetNotFound) {
+			respondError(w, http.StatusNotFound, "Aset tidak ditemukan.")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "Gagal mengecek stok aset.")
+		return
+	}
+	if available <= 0 {
+		respondError(w, http.StatusUnprocessableEntity,
+			"Aset ini sedang dipinjam semua atau masih menunggu persetujuan peminjaman lain, jadi belum bisa dipinjam.")
 		return
 	}
 	if req.Quantity > available {
-		http.Error(w,
-			fmt.Sprintf("stok tidak cukup: tersedia %d unit, diminta %d unit", available, req.Quantity),
-			http.StatusUnprocessableEntity,
-		)
+		respondError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("Stok tidak cukup: tersedia %d unit, diminta %d unit.", available, req.Quantity))
 		return
 	}
 
@@ -239,7 +270,7 @@ func (h *AssetHandler) BorrowAsset(w http.ResponseWriter, r *http.Request) {
 	borrowDate, errB := parseDate(req.BorrowDate)
 	returnDeadline, errD := parseDate(req.ReturnDeadline)
 	if errB != nil || errD != nil {
-		http.Error(w, "format tanggal tidak valid", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "Format tanggal tidak valid.")
 		return
 	}
 
@@ -257,7 +288,7 @@ func (h *AssetHandler) BorrowAsset(w http.ResponseWriter, r *http.Request) {
 		// karena aturan bisnis (mis. stok tidak cukup / status tidak
 		// memungkinkan). Pakai 422 (bukan 500) supaya frontend bisa
 		// membedakan "input salah" dari "server error".
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		respondInternal(w, err, "gagal mengajukan peminjaman")
 		return
 	}
 
@@ -278,7 +309,7 @@ func (h *AssetHandler) ListBorrowings(w http.ResponseWriter, r *http.Request) {
 
 	borrowings, total, err := h.borrowingService.List(r.Context(), status, borrowerID, limit, offset)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -294,7 +325,7 @@ func (h *AssetHandler) ApproveBorrowing(w http.ResponseWriter, r *http.Request) 
 	userID := r.Context().Value(middleware.ContextUserID).(string)
 
 	if err := h.borrowingService.Approve(r.Context(), id, userID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -304,9 +335,10 @@ func (h *AssetHandler) ApproveBorrowing(w http.ResponseWriter, r *http.Request) 
 
 func (h *AssetHandler) RejectBorrowing(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	userID := r.Context().Value(middleware.ContextUserID).(string)
 
-	if err := h.borrowingService.Reject(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := h.borrowingService.Reject(r.Context(), id, userID); err != nil {
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -323,12 +355,12 @@ func (h *AssetHandler) ReturnBorrowing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
 		return
 	}
 
 	if err := h.borrowingService.Return(r.Context(), id, model.ReturnCondition(req.ReturnCondition), req.ReturnNotes); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -342,7 +374,7 @@ func (h *AssetHandler) HandoverBorrowing(w http.ResponseWriter, r *http.Request)
 	id := chi.URLParam(r, "id")
 
 	if err := h.borrowingService.MarkBorrowed(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -353,7 +385,7 @@ func (h *AssetHandler) HandoverBorrowing(w http.ResponseWriter, r *http.Request)
 func (h *AssetHandler) ListOverdue(w http.ResponseWriter, r *http.Request) {
 	borrowings, err := h.borrowingService.ListOverdue(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -364,7 +396,7 @@ func (h *AssetHandler) ListOverdue(w http.ResponseWriter, r *http.Request) {
 func (h *AssetHandler) GetBorrowedCount(w http.ResponseWriter, r *http.Request) {
 	count, err := h.borrowingService.CountBorrowed(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -385,7 +417,7 @@ func (h *AssetHandler) DisposeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
 		return
 	}
 
@@ -401,7 +433,7 @@ func (h *AssetHandler) DisposeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.disposalService.Create(r.Context(), disposal); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 
@@ -420,7 +452,7 @@ func (h *AssetHandler) ListDisposals(w http.ResponseWriter, r *http.Request) {
 
 	disposals, total, err := h.disposalService.List(r.Context(), limit, offset)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternal(w, err, "gagal memproses permintaan aset")
 		return
 	}
 

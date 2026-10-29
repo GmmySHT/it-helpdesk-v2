@@ -1,13 +1,8 @@
 package handler
 
 import (
-	"fmt"
-	"io"
+	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
-
-	"github.com/google/uuid"
 )
 
 // UploadHandler menangani upload gambar generik yang disisipkan LANGSUNG
@@ -22,39 +17,28 @@ func NewUploadHandler() *UploadHandler {
 
 func (h *UploadHandler) UploadInlineImage(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil { // maks 10MB per gambar
-		respondError(w, http.StatusBadRequest, "gagal membaca file, pastikan pakai multipart/form-data")
+		respondError(w, http.StatusBadRequest, "gagal membaca file, pastikan pakai multipart/form-data (maksimal 10 MB)")
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	file, _, err := r.FormFile("file")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "field 'file' wajib diisi")
 		return
 	}
 	defer file.Close()
 
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		respondError(w, http.StatusInternalServerError, "gagal menyiapkan folder upload")
-		return
-	}
-
-	ext := filepath.Ext(header.Filename)
-	newFileName := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-	destPath := filepath.Join(uploadDir, newFileName)
-
-	dst, err := os.Create(destPath)
+	// Isi file divalidasi (harus gambar sungguhan) dan nama file dibuat acak
+	// dengan ekstensi dari tipe yang terdeteksi — lihat saveValidatedImage.
+	url, err := saveValidatedImage(file)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "gagal menyimpan file")
-		return
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, file); err != nil {
-		respondError(w, http.StatusInternalServerError, "gagal menyimpan file")
+		if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrImageTooLarge) {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		respondInternal(w, err, "gagal menyimpan file")
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
-		"url": "/uploads/" + newFileName,
-	})
+	respondJSON(w, http.StatusOK, map[string]string{"url": url})
 }

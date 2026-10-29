@@ -35,7 +35,7 @@ type Asset struct {
 	SerialNumber string        `json:"serial_number,omitempty"`
 	Condition    AssetCondition `json:"condition"`
 	Stock        int           `json:"stock"`
-	AvailableStock int         `json:"available_stock,omitempty"`
+	AvailableStock int         `json:"available_stock"`
 	Location     string        `json:"location,omitempty"`
 	Notes        string        `json:"notes,omitempty"`
 	CreatedBy    string        `json:"created_by"`
