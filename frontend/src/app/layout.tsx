@@ -1,3 +1,12 @@
+/**
+ * IT Helpdesk & Asset Management System
+ * Copyright (c) 2026 Firaz Faruq <firaz.faruq@gmail.com>
+ *
+ * Karya orisinal: ide, desain UI/UX, arsitektur sistem,
+ * dan seluruh implementasi kode dikerjakan oleh Firaz Faruq.
+ * Dilarang menyalin atau mendistribusikan tanpa izin tertulis.
+ */
+
 import type { Metadata } from "next";
 import { Inter, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";

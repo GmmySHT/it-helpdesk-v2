@@ -1,3 +1,12 @@
+/*
+ * IT Helpdesk & Asset Management System
+ * Copyright (c) 2026 Firaz Faruq <firaz.faruq@gmail.com>
+ *
+ * Karya orisinal: ide, desain, arsitektur, dan implementasi
+ * seluruhnya dikerjakan oleh Firaz Faruq.
+ * Dilarang menyalin atau mendistribusikan tanpa izin tertulis.
+ */
+
 package router
 
 import (
