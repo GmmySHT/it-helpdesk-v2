@@ -1,0 +1,489 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  
+  /* Dark mode - Truly Black Background */
+  --bg-base: #000000;
+  --bg-page: #000000; /* Benar-benar hitam */
+  --bg-sidebar: #0f0f0fb7; /* Very dark gray, bukan pure black agar beda dari page */
+  --bg-card: #1A1A1A; /* Charcoal gelap untuk card */
+  --bg-card-hover: #252525;
+  --bg-elevated: #2D2D2D;
+  --text-primary: #FFFFFF; /* Putih penuh */
+  --text-secondary: #E8E8E8; /* Gray terang */
+  --text-muted: #B0B0B0; /* Gray medium */
+  --text-disabled: #707070; /* Gray gelap */
+  --border-primary: #404040; /* Border visible di dark */
+  --border-subtle: #2A2A2A;
+  --divider: rgba(255, 255, 255, 0.1);
+  --focus-ring: #E6A8A8;
+  --hover-overlay: rgba(182, 42, 45, 0.15);
+  --accent-teal: #B62A2D;
+  --accent-teal-dark: #D5575E;
+  --accent-blue: #E6A8A8;
+  --accent-purple: #D5575E;
+  --accent-amber: #E6A8A8;
+  --accent-green: #D5575E;
+  --accent-red: #D5575E;
+  --vignette: rgba(0, 0, 0, 0);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+}
+
+/* Light mode - Clean & Professional */
+[data-theme="light"] {
+  --bg-base: #000000;  /* Particle tetap hitam */
+  --bg-page: #F4FBFC; /* Clean light cyan background */
+  --bg-sidebar: #0D9488; /* Tosca utama untuk sidebar */
+  --bg-card: #FFFFFF; /* Pure white untuk card */
+  --bg-card-hover: #FFFFFF; /* Tetap white saat hover */
+  --bg-elevated: #FFFFFF; /* Pure white */
+  --text-primary: #115E70; /* Tosca dark untuk text utama */
+  --text-secondary: #0D9488; /* Tosca utama untuk secondary */
+  --text-muted: #075549; /* Tosca light untuk muted */
+  --text-disabled: #A7D8DE; /* Tosca lighter untuk disabled */
+  --sidebar-text-primary: #FFFFFF; /* White text on tosca sidebar */
+  --sidebar-text-secondary: #E0F2FE; /* Very light text secondary */
+  --sidebar-text-muted: #C7EDF0; /* Light tosca untuk muted */
+  --border-primary: #C7EDF0; /* Light cyan border */
+  --border-subtle: #E5F7FA; /* Very light border */
+  --sidebar-border: #0D9488; /* Tosca utama border */
+  --divider: rgba(13, 148, 136, 0.1); /* Tosca divider */
+  --focus-ring: #0D9488; /* Tosca utama focus */
+  --hover-overlay: rgba(13, 148, 136, 0.08); /* Tosca hover */
+  --sidebar-hover: rgba(255, 255, 255, 0.15); /* White hover overlay */
+  --accent-teal: #0D9488; /* Tosca utama primary accent */
+  --accent-teal-dark: #115E70; /* Tosca dark */
+  --accent-blue: #0369A1; /* Blue untuk status */
+  --accent-purple: #7C3AED; /* Purple */
+  --accent-amber: #FBBF24; /* Kuning untuk sedang dikerjakan */
+  --accent-green: #10B981; /* Green */
+  --accent-red: #EF4444; /* Red untuk masalah/prioritas */
+  --vignette: rgba(0, 0, 0, 0);
+  --shadow-sm: 0 1px 2px 0 rgba(13, 148, 136, 0.05);
+  --shadow-md: 0 4px 12px rgba(13, 148, 136, 0.1);
+  --shadow-lg: 0 10px 20px rgba(13, 148, 136, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-page: var(--bg-page);
+  --color-sidebar: var(--bg-sidebar);
+  --color-card: var(--bg-card);
+  --color-card-hover: var(--bg-card-hover);
+  --color-elevated: var(--bg-elevated);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-disabled: var(--text-disabled);
+  --color-sidebar-text-primary: var(--sidebar-text-primary);
+  --color-sidebar-text-secondary: var(--sidebar-text-secondary);
+  --color-sidebar-text-muted: var(--sidebar-text-muted);
+  --color-border: var(--border-primary);
+  --color-border-subtle: var(--border-subtle);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-divider: var(--divider);
+  --color-focus-ring: var(--focus-ring);
+  --color-hover-overlay: var(--hover-overlay);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-accent: var(--accent-teal);
+  --color-accent-dark: var(--accent-teal-dark);
+  --color-accent-teal-dark: var(--accent-teal-dark);
+  --color-blue: var(--accent-blue);
+  --color-purple: var(--accent-purple);
+  --color-amber: var(--accent-amber);
+  --color-green: var(--accent-green);
+  --color-red: var(--accent-red);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+  /* Light mode card content — text putih biar terlihat di card abu-abu */
+  [data-theme="light"] .card-text {
+    color: #FFFFFF;
+  }
+
+body {
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Typography scales */
+.text-xs { font-size: 12px; line-height: 1.4; }
+.text-sm { font-size: 13px; line-height: 1.4; }
+.text-base { font-size: 14px; line-height: 1.5; }
+.text-lg { font-size: 16px; line-height: 1.6; }
+.text-xl { font-size: 18px; line-height: 1.6; }
+.text-2xl { font-size: 20px; line-height: 1.7; font-weight: 600; }
+.text-3xl { font-size: 24px; line-height: 1.8; font-weight: 700; }
+
+/* Card variations — base (dark mode default) */
+.card-primary {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-secondary {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-accent {
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-elevated {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+}
+
+/* Light mode card variations — clean white cards */
+[data-theme="light"] .card-primary {
+  background: #FFFFFF;
+  border: 1px solid #C7EDF0;
+  border-radius: 12px;
+  color: #115E70;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.1);
+  transition: all 300ms ease;
+}
+
+[data-theme="light"] .card-primary:hover {
+  border-color: #5EEAD4;
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.15);
+}
+
+[data-theme="light"] .card-secondary {
+  background: #FFFFFF;
+  border: 1px solid #E5F7FA;
+  border-radius: 12px;
+  color: #0D9488;
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.05);
+}
+
+[data-theme="light"] .card-accent {
+  background: #FFFFFF;
+  border: 1px solid #C7EDF0;
+  border-radius: 12px;
+  color: #115E70;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.1);
+}
+
+[data-theme="light"] .card-elevated {
+  background: #FFFFFF;
+  border: 1px solid #C7EDF0;
+  border-radius: 12px;
+  color: #115E70;
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.12);
+}
+
+/* Status badges — warna berbeda per status */
+[data-theme="light"] .badge-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  display: inline-block;
+}
+
+[data-theme="light"] .badge-resolved {
+  background: #D1FAE5;
+  color: #115E70;
+  border: 1px solid #0D9488;
+}
+
+[data-theme="light"] .badge-in-progress {
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FBBF24;
+}
+
+[data-theme="light"] .badge-pending-review {
+  background: #DBEAFE;
+  color: #0C4A6E;
+  border: 1px solid #0369A1;
+}
+
+[data-theme="light"] .badge-priority {
+  background: #FEE2E2;
+  color: #7F1D1D;
+  border: 1px solid #EF4444;
+}
+
+
+/* Dark dropdown: native <select> + <option> hitam di dark theme */
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background: #1A1A1A;
+  color: #FFFFFF;
+  padding: 6px 12px;
+}
+
+select option:hover,
+select option:checked {
+  background: #2D2D2D;
+}
+
+[data-theme="light"] select {
+  color-scheme: light;
+}
+
+[data-theme="light"] select option {
+  background: #FFFFFF;
+  color: #1A1A1A;
+}
+
+[data-theme="light"] select option:hover,
+[data-theme="light"] select option:checked {
+  background: #F9F7F5;
+}
+
+/* Container utama semua page */
+.page-wrapper {
+  background: var(--bg-page);
+}
+
+/* Detail kecil: separators / hr */
+.separator {
+  border-top: 1px solid var(--divider);
+  margin: 0.75rem 0;
+}
+
+/* Focus rings detail */
+*:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Input styling detail */
+.input-outline:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px rgba(var(--focus-ring), 0.1);
+}
+
+/* Hover states detail */
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Subtle borders untuk table cells */
+.cell-border {
+  border-color: var(--border-subtle);
+}
+
+/* Disabled state detail */
+.disabled-overlay {
+  background-color: var(--hover-overlay);
+  opacity: 0.5;
+}
+
+ .rich-content ul { 
+    list-style: disc !important; 
+    padding-left: 1.5rem !important; 
+    margin-bottom: 0.5rem; } 
+ .rich-content ol { 
+    list-style: decimal !important; 
+  padding-left: 1.5rem !important; 
+    margin-bottom: 0.5rem; } 
+ .rich-content li { 
+    display: list-item !important; } 
+ .rich-content strong { 
+    font-weight: 600; color: var(--text-primary); } 
+ .rich-content em { 
+    font-style: italic; } 
+ .rich-content p { 
+    margin-bottom: 0.5rem; } 
+
+ .rich-content img { 
+    max-width: 100%; 
+    border-radius: 6px; } 
+ 
+ .rich-content p.is-editor-empty:first-child::before { 
+    content: attr(data-placeholder); 
+    color: var(--text-muted); 
+    float: left; 
+    pointer-events: none; 
+    height: 0; }
+
+@keyframes slide-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+@keyframes page-fade-in { 
+  from { opacity: 0; } 
+  to { opacity: 1; } 
+}
+
+.page-transition {
+  animation: page-fade-in 300ms ease-in-out;
+}
+
+/* Skeleton pulse untuk loading placeholder */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.8; }
+}
+
+.skeleton {
+  background: var(--bg-elevated);
+  animation: skeleton-pulse 1.5s infinite;
+}
+
+/* Blob background mengambang pelan — dipakai AnimatedBackground di dashboard */
+@keyframes blob-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -30px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.95); }
+}
+
+/* Efek "liquid shimmer" — kilau bergerak melintasi progress bar, memberi
+   kesan cairan yang sedikit berkilau, bukan warna solid statis. */
+@keyframes liquid-shimmer {
+  0% { background-position: -150% 0; }
+  100% { background-position: 250% 0; }
+}
+.progress-liquid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.7) 50%,
+    transparent 80%
+  );
+  background-size: 200% 100%;
+  animation: liquid-shimmer 1.8s linear infinite;
+}
+
+/* Scrollbar tipis untuk panel dashboard */
+.slim-scroll {
+  scrollbar-gutter: stable; /* ruang scrollbar dicadangkan, kolom tidak bergeser */
+}
+.slim-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.slim-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.slim-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
+}
+.slim-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+}
+.slim-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.75);
+}
+
+/* Firefox dan browser yang tidak mengenal ::-webkit-scrollbar */
+@supports not selector(::-webkit-scrollbar) {
+  .slim-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  }
+}
+
+/* Chat-style comments */
+.comment-container {
+  display: flex;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+
+.comment-container.own {
+  flex-direction: row-reverse;
+}
+
+.comment-bubble {
+  max-width: 70%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+}
+
+.comment-container.own .comment-bubble {
+  background: var(--accent-dark, #1a472a);
+  border-color: var(--accent, #00A693);
+}
+
+.comment-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.comment-container.own .comment-header {
+  flex-direction: row-reverse;
+}
+
+.comment-user-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.comment-user-name.user-0 { color: #FF6B6B; }
+.comment-user-name.user-1 { color: #4ECDC4; }
+.comment-user-name.user-2 { color: #45B7D1; }
+.comment-user-name.user-3 { color: #FFA07A; }
+.comment-user-name.user-4 { color: #98D8C8; }
+.comment-user-name.user-5 { color: #F7DC6F; }
+.comment-user-name.user-6 { color: #BB8FCE; }
+.comment-user-name.user-7 { color: #85C1E2; }
+
+.comment-timestamp {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.comment-container.own .comment-timestamp {
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+.comment-message {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+/* Sticky back button */
+.sticky-back {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg-page);
+  padding: 0.75rem 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 2rem;
+}

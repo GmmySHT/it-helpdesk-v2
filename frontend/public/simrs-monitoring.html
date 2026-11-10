@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIMRS Executive Monitoring</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --tosca: #008080;
+    --tosca-dark: #006B6B;
+    --tosca-light: #E6F4F4;
+  }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #F0F4F8; }
+  .card-glow { transition: all .3s; }
+  .card-glow:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0,128,128,.15); }
+  @keyframes pulseNum { 0%{transform:scale(1)} 50%{transform:scale(1.08); color:#00A693} 100%{transform:scale(1)} }
+  .num-update { animation: pulseNum .5s ease; }
+  .status-dot { width:10px; height:10px; border-radius:50%; background:#10B981; display:inline-block; animation: blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+</style>
+</head>
+<body class="text-slate-800">
+
+<!-- HEADER -->
+<header class="bg-gradient-to-r from-teal-700 to-teal-600 text-white shadow-lg sticky top-0 z-10">
+  <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+    <div class="flex items-center gap-3">
+      <div class="bg-white/20 p-2 rounded-xl text-2xl">⚕️</div>
+      <div>
+        <h1 class="text-xl font-bold tracking-wide">SIMRS EXECUTIVE MONITORING</h1>
+        <p class="text-teal-100 text-sm">RS Islam Harapan</p>
+      </div>
+    </div>
+    <div class="text-right">
+      <div id="clock" class="text-2xl font-bold tabular-nums">--:--:--</div>
+      <div id="date" class="text-teal-100 text-sm"></div>
+    </div>
+  </div>
+</header>
+
+<main class="container mx-auto px-6 py-6">
+
+  <!-- LIVE BADGE -->
+  <div class="flex items-center gap-2 mb-6">
+    <span class="status-dot"></span>
+    <span class="text-teal-700 font-semibold text-sm uppercase tracking-wider">Live Monitoring</span>
+    <span class="text-slate-400 text-sm">· Refresh tiap 3 detik (simulasi)</span>
+  </div>
+
+  <!-- STAT CARDS -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8" id="statCards">
+    <div class="card-glow bg-white rounded-2xl shadow-md border border-teal-100 p-6">
+      <p class="text-slate-500 text-sm font-medium">Total Pendapatan Hari Ini</p>
+      <h2 id="statRevenue" class="text-3xl font-black text-teal-700 mt-2">Rp 0</h2>
+      <p class="text-green-600 text-sm mt-2">▲ 12.4% dari kemarin</p>
+    </div>
+    <div class="card-glow bg-white rounded-2xl shadow-md border border-teal-100 p-6">
+      <p class="text-slate-500 text-sm font-medium">Total Kunjungan Pasien</p>
+      <h2 id="statVisits" class="text-3xl font-black text-teal-700 mt-2">0</h2>
+      <p class="text-slate-400 text-sm mt-2">Rawat Jalan · IGD · Inap</p>
+    </div>
+    <div class="card-glow bg-white rounded-2xl shadow-md border border-teal-100 p-6">
+      <p class="text-slate-500 text-sm font-medium">Ruangan Teramai</p>
+      <h2 id="statBusiest" class="text-2xl font-black text-teal-700 mt-2">-</h2>
+      <p id="statBusiestVal" class="text-slate-400 text-sm mt-2">0 pasien</p>
+    </div>
+    <div class="card-glow bg-white rounded-2xl shadow-md border border-teal-100 p-6">
+      <p class="text-slate-500 text-sm font-medium">Rata-rata Waktu Tunggu</p>
+      <h2 id="statWait" class="text-3xl font-black text-teal-700 mt-2">0 menit</h2>
+      <p class="text-slate-400 text-sm mt-2">Pendaftaran → Pelayanan</p>
+    </div>
+  </div>
+
+  <!-- ROOM TABLE -->
+  <div class="bg-white rounded-2xl shadow-md border border-teal-100 overflow-hidden">
+    <div class="bg-teal-50 px-6 py-4 border-b border-teal-100 flex justify-between items-center">
+      <h3 class="font-bold text-teal-800 text-lg">Monitoring per Ruangan</h3>
+      <input id="searchRoom" type="text" placeholder="Cari ruangan..." class="border border-teal-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+          <tr>
+            <th class="text-left px-6 py-3">Ruangan</th>
+            <th class="text-left px-6 py-3">Jenis</th>
+            <th class="text-center px-6 py-3">Pasien Aktif</th>
+            <th class="text-center px-6 py-3">Kapasitas</th>
+            <th class="text-left px-6 py-3">Dokter Jaga</th>
+            <th class="text-right px-6 py-3">Pendapatan</th>
+            <th class="text-center px-6 py-3">Status</th>
+          </tr>
+        </thead>
+        <tbody id="roomTable" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="text-center text-slate-400 text-xs mt-6">Data simulasi — struktur field mengikuti schema SIMRS (ruangan_m, pendaftaran_t, pegawai_m)</p>
+</main>
+
+<script>
+// ===== DATA SIMULASI (mock meniru struktur SIMRS) =====
+let rooms = [
+  { id:1, nama:"Poli Penyakit Dalam", jenis:"Rawat Jalan", pasien:24, kapasitas:40, dokter:"dr. Ahmad Sp.PD", revenue:45200000 },
+  { id:2, nama:"Poli Anak",          jenis:"Rawat Jalan", pasien:31, kapasitas:40, dokter:"dr. Sari Sp.A",  revenue:38750000 },
+  { id:3, nama:"IGD",                jenis:"Gawat Darurat", pasien:12, kapasitas:20, dokter:"dr. Budi Sp.EM", revenue:62100000 },
+  { id:4, nama:"Poli Jantung",       jenis:"Rawat Jalan", pasien:18, kapasitas:30, dokter:"dr. Rina Sp.JP", revenue:54300000 },
+  { id:5, nama:"Ruang Inap Dahlia",  jenis:"Rawat Inap",  pasien:28, kapasitas:32, dokter:"dr. Putri Sp.PD", revenue:96500000 },
+  { id:6, nama:"Ruang Inap Melati",  jenis:"Rawat Inap",  pasien:22, kapasitas:30, dokter:"dr. Doni Sp.B",  revenue:84200000 },
+  { id:7, nama:"Poli Mata",          jenis:"Rawat Jalan", pasien:15, kapasitas:25, dokter:"dr. Lina Sp.M",  revenue:29400000 },
+  { id:8, nama:"Poli Gigi",          jenis:"Rawat Jalan", pasien:9,  kapasitas:20, dokter:"dr. Fajar Sp.KG", revenue:18600000 },
+];
+
+const fmtRp = n => "Rp " + n.toLocaleString("id-ID");
+const $ = id => document.getElementById(id);
+
+function renderRooms(filter="") {
+  const tbody = $("roomTable");
+  tbody.innerHTML = "";
+  rooms
+    .filter(r => r.nama.toLowerCase().includes(filter.toLowerCase()) || r.dokter.toLowerCase().includes(filter.toLowerCase()))
+    .forEach(r => {
+      const pct = Math.round(r.pasien / r.kapasitas * 100);
+      const status = pct >= 80 ? ["Penuh","bg-red-100 text-red-700"] : pct >= 50 ? ["Sibuk","bg-amber-100 text-amber-700"] : ["Normal","bg-green-100 text-green-700"];
+      tbody.innerHTML += `
+        <tr class="hover:bg-teal-50/50 transition">
+          <td class="px-6 py-4 font-semibold text-slate-700">${r.nama}</td>
+          <td class="px-6 py-4"><span class="bg-teal-50 text-teal-700 px-2 py-1 rounded text-xs font-medium">${r.jenis}</span></td>
+          <td class="px-6 py-4 text-center">
+            <div class="font-bold text-teal-700">${r.pasien}</div>
+            <div class="w-24 bg-slate-100 rounded-full h-1.5 mt-1 mx-auto">
+              <div class="bg-teal-500 h-1.5 rounded-full" style="width:${pct}%"></div>
+            </div>
+          </td>
+          <td class="px-6 py-4 text-center text-slate-500">${r.kapasitas}</td>
+          <td class="px-6 py-4 text-slate-600">${r.dokter}</td>
+          <td class="px-6 py-4 text-right font-bold text-slate-700 tabular-nums">${fmtRp(r.revenue)}</td>
+          <td class="px-6 py-4 text-center"><span class="px-2 py-1 rounded-full text-xs font-bold ${status[1]}">${status[0]}</span></td>
+        </tr>`;
+    });
+}
+
+function renderStats() {
+  const totalRev = rooms.reduce((s,r)=>s+r.revenue,0);
+  const totalPat = rooms.reduce((s,r)=>s+r.pasien,0);
+  const busiest = rooms.reduce((a,b)=>a.pasien>b.pasien?a:b);
+  $("statRevenue").textContent = fmtRp(totalRev);
+  $("statVisits").textContent = totalPat;
+  $("statBusiest").textContent = busiest.nama;
+  $("statBusiestVal").textContent = busiest.pasien + " pasien";
+  $("statWait").textContent = (8 + Math.floor(Math.random()*6)) + " menit";
+}
+
+function tick() {
+  // simulasi perubahan data real-time
+  rooms.forEach(r => {
+    r.pasien = Math.max(1, Math.min(r.kapasitas, r.pasien + Math.floor(Math.random()*5)-2));
+    r.revenue += Math.floor(Math.random()*150000);
+  });
+  renderStats();
+  renderRooms($("searchRoom").value);
+  ["statRevenue","statVisits"].forEach(id => { const el=$(id); el.classList.remove("num-update"); void el.offsetWidth; el.classList.add("num-update"); });
+}
+
+function clock() {
+  const d = new Date();
+  $("clock").textContent = d.toLocaleTimeString("id-ID");
+  $("date").textContent = d.toLocaleDateString("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
+}
+
+$("searchRoom").addEventListener("input", e => renderRooms(e.target.value));
+
+renderStats();
+renderRooms();
+clock();
+setInterval(clock, 1000);
+setInterval(tick, 3000);
+</script>
+</body>
+</html>

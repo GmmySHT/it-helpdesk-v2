@@ -1,0 +1,37 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@tiptap/extension-image": "^3.30.6",
+    "@tiptap/extension-placeholder": "^3.30.6",
+    "@tiptap/react": "^3.30.6",
+    "@tiptap/starter-kit": "^3.30.6",
+    "date-fns": "^4.4.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "lucide-react": "^1.49.0",
+    "next": "16.3.2",
+    "page-mascot": "^0.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "recharts": "^3.10.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
