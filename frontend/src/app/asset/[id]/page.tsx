@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/sidebar";
 import {
   getAsset,
   deleteAsset,
+  getMyPermissions,
   Asset,
   borrowAsset,
   listBorrowings,
@@ -34,7 +35,7 @@ export default function AssetDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const canManage = user?.role === "leader" || user?.role === "admin";
+  const [canManage, setCanManage] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -55,10 +56,13 @@ export default function AssetDetailPage() {
     const fetch = async () => {
       try {
         setLoading(true);
-        const [assetRes, borrowingsRes] = await Promise.all([
+        const [perms, assetRes, borrowingsRes] = await Promise.all([
+          getMyPermissions(token),
           getAsset(token, assetId),
           listBorrowings(token, undefined, undefined, 100),
         ]);
+        const assetPerm = perms.find((p) => p.module_code === "asset");
+        setCanManage(assetPerm?.access_level === "editor");
         setAsset(assetRes);
         setBorrowings(borrowingsRes.data?.filter((b) => b.asset_id === assetId) || []);
       } catch (err) {

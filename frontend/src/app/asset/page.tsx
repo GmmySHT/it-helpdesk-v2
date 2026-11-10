@@ -7,6 +7,7 @@ import PageHeader from "@/components/page-header";
 import {
   listAssets,
   listAssetCategories,
+  getMyPermissions,
   AssetCategory,
   Asset,
   AssetConditionEnum,
@@ -42,15 +43,21 @@ export default function AssetPage() {
   const [selectedCondition, setSelectedCondition] = useState("");
   const [searchCode, setSearchCode] = useState("");
 
+  const [canManageAsset, setCanManageAsset] = useState(false);
+
   useEffect(() => {
     if (!token) {
       router.push("/login");
       return;
     }
 
-    const fetch = async () => {
+    const init = async () => {
       try {
-        setLoading(true);
+        const perms = await getMyPermissions(token);
+        const assetPerm = perms.find((p) => p.module_code === "asset");
+        const isEditor = assetPerm?.access_level === "editor";
+        setCanManageAsset(isEditor);
+
         const [assetsRes, categoriesRes] = await Promise.all([
           listAssets(token, selectedCategory || undefined, selectedCondition || undefined),
           listAssetCategories(token),
@@ -65,7 +72,7 @@ export default function AssetPage() {
       }
     };
 
-    fetch();
+    init();
   }, [token, selectedCategory, selectedCondition, router]);
 
   const filteredAssets = assets.filter(
@@ -80,7 +87,7 @@ export default function AssetPage() {
           title="Aset IT"
           subtitle="Kelola inventaris aset teknologi"
           actions={
-            (user?.role === "leader" || user?.role === "admin")
+            canManageAsset
               ? [{ label: "+ Tambah Aset", href: "/asset/new", variant: "primary" as const }]
               : []
           }
@@ -181,7 +188,7 @@ export default function AssetPage() {
                   <div className="text-right">
                     <p className="text-2xl font-bold text-accent">{asset.stock}</p>
                     <p className="text-xs text-text-muted">unit</p>
-                    {(user?.role === "leader" || user?.role === "admin") && (
+                    {canManageAsset && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

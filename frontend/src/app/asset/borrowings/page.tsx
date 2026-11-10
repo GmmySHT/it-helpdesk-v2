@@ -11,6 +11,7 @@ import {
   handoverBorrowing,
   returnBorrowing,
   listOverdueBorrowings,
+  getMyPermissions,
   AssetBorrowing,
   ReturnConditionEnum,
 } from "@/lib/api";
@@ -49,10 +50,8 @@ function BorrowingsContent() {
   const [returnCondition, setReturnCondition] = useState<ReturnConditionEnum>("good");
   const [returnNotes, setReturnNotes] = useState("");
 
-  // canManage: staff_it/leader/admin boleh lihat SEMUA peminjaman + approve.
-  // Pelapor (user) hanya melihat riwayat miliknya sendiri.
-  const canManage =
-    user?.role === "staff_it" || user?.role === "leader" || user?.role === "admin";
+  // canManage: diambil dari RBAC asset.editor
+  const [canManage, setCanManage] = useState(false);
 
   useEffect(() => {
     // Ikuti perubahan query ?status= (mis. dari sidebar "Approve Peminjaman")
@@ -79,9 +78,14 @@ function BorrowingsContent() {
     const fetchData = async () => {
       try {
         setLoading(true);
+        const perms = await getMyPermissions(token);
+        const assetPerm = perms.find((p) => p.module_code === "asset");
+        const isEditor = assetPerm?.access_level === "editor";
+        if (!cancelled) setCanManage(isEditor);
+
         const [borrowingsRes, overduesRes] = await Promise.all([
-          listBorrowings(token, filter || undefined, canManage ? undefined : user?.id, 100),
-          canManage ? listOverdueBorrowings(token) : Promise.resolve([]),
+          listBorrowings(token, filter || undefined, isEditor ? undefined : user?.id, 100),
+          isEditor ? listOverdueBorrowings(token) : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setBorrowings(borrowingsRes.data || []);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
-import { listDisposals, AssetDisposal } from "@/lib/api";
+import { listDisposals, getMyPermissions, AssetDisposal } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 
 const METHOD_COLORS = {
@@ -34,15 +34,15 @@ export default function DisposalsPage() {
       return;
     }
 
-    const isAdmin = user?.role === "leader" || user?.role === "admin";
-    if (!isAdmin) {
-      router.push("/asset");
-      return;
-    }
-
-    const fetch = async () => {
+    const init = async () => {
       try {
-        setLoading(true);
+        const perms = await getMyPermissions(token);
+        const assetPerm = perms.find((p) => p.module_code === "asset");
+        if (assetPerm?.access_level !== "editor") {
+          router.push("/asset");
+          return;
+        }
+
         const res = await listDisposals(token, 100);
         setDisposals(res.data || []);
       } catch (err) {
@@ -52,8 +52,8 @@ export default function DisposalsPage() {
       }
     };
 
-    fetch();
-  }, [token, user, router]);
+    init();
+  }, [token, router]);
 
   return (
     <div className="relative z-0 flex h-screen bg-transparent font-[family-name:var(--font-body)]">

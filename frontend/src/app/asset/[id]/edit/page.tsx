@@ -7,6 +7,7 @@ import {
   getAsset,
   updateAsset,
   listAssetCategories,
+  getMyPermissions,
   Asset,
   AssetCategory,
   AssetConditionEnum,
@@ -39,22 +40,23 @@ export default function EditAssetPage() {
   });
 
   useEffect(() => {
-    if (isLoading) return; // tunggu sesi dipulihkan dari localStorage
+    if (isLoading) return;
 
     if (!token) {
       router.push("/login");
       return;
     }
 
-    const canManage = user?.role === "leader" || user?.role === "admin";
-    if (!canManage) {
-      router.push("/asset");
-      return;
-    }
-
     const load = async () => {
       try {
         setPageLoading(true);
+        const perms = await getMyPermissions(token);
+        const assetPerm = perms.find((p) => p.module_code === "asset");
+        if (assetPerm?.access_level !== "editor") {
+          router.push("/asset");
+          return;
+        }
+
         const [assetRes, cats] = await Promise.all([
           getAsset(token, assetId),
           listAssetCategories(token),

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   createAsset,
   listAssetCategories,
+  getMyPermissions,
   AssetCategory,
   AssetConditionEnum,
 } from "@/lib/api";
@@ -38,14 +39,15 @@ export default function NewAssetPage() {
       return;
     }
 
-    const isAdmin = user?.role === "leader" || user?.role === "admin";
-    if (!isAdmin) {
-      router.push("/asset");
-      return;
-    }
-
-    const fetch = async () => {
+    const init = async () => {
       try {
+        const perms = await getMyPermissions(token);
+        const assetPerm = perms.find((p) => p.module_code === "asset");
+        if (assetPerm?.access_level !== "editor") {
+          router.push("/asset");
+          return;
+        }
+
         const cats = await listAssetCategories(token);
         setCategories(cats || []);
         if (cats.length > 0) {
@@ -56,8 +58,8 @@ export default function NewAssetPage() {
       }
     };
 
-    fetch();
-  }, [token, user, router]);
+    init();
+  }, [token, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
