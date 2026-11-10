@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { listDisposals, getMyPermissions, AssetDisposal } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
+import PageHeader from "@/components/page-header";
 
 const METHOD_COLORS = {
   recycle: "bg-green-500/20 text-green-600 border-green-300",
@@ -59,20 +60,13 @@ export default function DisposalsPage() {
     <div className="relative z-0 flex h-screen bg-transparent font-[family-name:var(--font-body)]">
       <Sidebar />
       <main className="relative flex-1 overflow-y-auto slim-scroll">
+        <PageHeader
+          title="Pemusnahan Aset"
+          subtitle="Riwayat aset yang telah dibuang"
+          actions={[{ label: "← Daftar Aset", href: "/asset", variant: "secondary" as const }]}
+        />
         <div className="relative z-10 w-full px-6 py-8 sm:px-10">
           <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-text-primary">♻️ Pemusnahan Aset</h1>
-            <p className="text-text-secondary mt-1">Riwayat aset yang telah dibuang</p>
-          </div>
-          <button
-            onClick={() => router.push("/asset")}
-            className="px-4 py-2 bg-border text-text-secondary hover:bg-border/80 rounded-lg"
-          >
-            ← Daftar Aset
-          </button>
-        </div>
 
         {error && (
           <div className="bg-red-500/20 border border-red-300 text-red-600 p-4 rounded-lg mb-6">

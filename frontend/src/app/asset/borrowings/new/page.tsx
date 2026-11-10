@@ -4,6 +4,7 @@ import { useState, useEffect, FormEvent } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import PageHeader from "@/components/page-header";
 import { listAssets, borrowAsset, Asset } from "@/lib/api";
 import { Calendar, ArrowLeft, Package } from "lucide-react";
 import { format } from "date-fns";
@@ -110,20 +111,12 @@ export default function NewBorrowingPage() {
     <div className="relative z-0 flex h-screen bg-transparent">
       <Sidebar />
       <main className="relative flex-1 overflow-y-auto slim-scroll">
-        <div className="sticky-back px-6">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-2 rounded-lg bg-page px-4 py-2 text-sm font-medium text-text hover:bg-page/80"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Kembali
-          </button>
-        </div>
-
+        <PageHeader
+          title="Pinjam Aset"
+          subtitle="Ajukan peminjaman aset IT"
+          actions={[{ label: "← Kembali", href: "/asset/borrowings", variant: "secondary" as const }]}
+        />
         <div className="relative z-10 w-full px-6 py-8">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-white">Pinjam Aset</h1>
-          </div>
 
           {loadError && (
             <div role="alert" className="mb-6 rounded-lg bg-red-500/15 p-4 text-red-400">

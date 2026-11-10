@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useNotificationsContext } from "@/lib/notifications-context";
 import { Sidebar } from "@/components/sidebar";
+import PageHeader from "@/components/page-header";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import {
   Ticket,
@@ -197,23 +198,16 @@ export function TicketsContent() {
     <div className="relative z-0 flex h-screen bg-transparent font-[family-name:var(--font-body)]">
       <Sidebar />
       <main className="flex-1 overflow-y-auto slim-scroll">
-        <div className="w-full px-6 py-10 sm:px-10">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <p className="mb-1 font-[family-name:var(--font-display)] text-xs uppercase tracking-widest text-accent">
-              Ticketing
-            </p>
-            <h1 className="font-[family-name:var(--font-display)] text-xl font-semibold text-text-primary">
-              Daftar Tiket
-            </h1>
-          </div>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-card transition-all duration-150 hover:bg-accent/80"
-          >
-            {showForm ? "Batal" : "+ Buat Tiket"}
-          </button>
-        </div>
+        <PageHeader
+          title="Daftar Tiket"
+          subtitle="Kelola semua permintaan layanan IT"
+          actions={[{
+            label: showForm ? "Batal" : "+ Buat Tiket",
+            onClick: () => setShowForm(!showForm),
+            variant: showForm ? "secondary" as const : "primary" as const,
+          }]}
+        />
+        <div className="w-full px-6 py-6 sm:px-10">
 
         {error && (
           <div className="mb-5 rounded-md border border-red/30 bg-red/10 px-4 py-2.5 text-sm text-red">

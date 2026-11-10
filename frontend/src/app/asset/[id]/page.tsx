@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter, useParams } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import PageHeader from "@/components/page-header";
 import {
   getAsset,
   deleteAsset,
@@ -151,40 +152,19 @@ export default function AssetDetailPage() {
     <div className="relative z-0 flex h-screen bg-transparent font-[family-name:var(--font-body)]">
       <Sidebar />
       <main className="relative flex-1 overflow-y-auto slim-scroll">
-        <div className="sticky-back px-6 sm:px-10">
-          <button
-            onClick={() => router.back()}
-            className="px-3 py-2 bg-border text-text-secondary hover:bg-border/80 rounded inline-flex items-center gap-2"
-          >
-            ← Kembali
-          </button>
-        </div>
-
+        <PageHeader
+          title={asset.code}
+          subtitle={asset.name}
+          actions={[
+            ...(canManage ? [
+              { label: "✏️ Edit", href: `/asset/${asset.id}/edit`, variant: "primary" as const },
+              { label: "🗑️ Hapus", onClick: () => setShowDeleteConfirm(true), variant: "danger" as const },
+            ] : []),
+            { label: "← Kembali", href: "/asset", variant: "secondary" as const },
+          ]}
+        />
         <div className="relative z-10 w-full px-6 py-8 sm:px-10">
           <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-4 mb-6">
-          <div className="flex-1">
-            <h1 className="text-3xl font-bold text-text-primary">{asset.code}</h1>
-            <p className="text-text-secondary mt-1">{asset.name}</p>
-          </div>
-          {canManage && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => router.push(`/asset/${asset.id}/edit`)}
-                className="px-4 py-2 bg-accent text-white font-semibold rounded-lg hover:opacity-90 transition"
-              >
-                ✏️ Edit
-              </button>
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="px-4 py-2 bg-red-500/20 border border-red-300 text-red-600 font-semibold rounded-lg hover:bg-red-500/30 transition"
-              >
-                🗑️ Hapus
-              </button>
-            </div>
-          )}
-        </div>
 
         {showDeleteConfirm && (
           <div className="bg-red-500/10 border border-red-300 rounded-lg p-4 mb-6">

@@ -13,6 +13,7 @@ import {
   AssetConditionEnum,
 } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
+import PageHeader from "@/components/page-header";
 
 export default function EditAssetPage() {
   const { token, user, isLoading } = useAuth();
@@ -119,25 +120,13 @@ export default function EditAssetPage() {
     <div className="relative z-0 flex h-screen bg-transparent font-[family-name:var(--font-body)]">
       <Sidebar />
       <main className="relative flex-1 overflow-y-auto slim-scroll">
-        <div className="sticky-back px-6 sm:px-10">
-          <button
-            onClick={() => router.back()}
-            className="px-3 py-2 bg-border text-text-secondary hover:bg-border/80 rounded inline-flex items-center gap-2"
-          >
-            ← Kembali
-          </button>
-        </div>
-
+        <PageHeader
+          title="Edit Aset"
+          subtitle={asset ? `${asset.code} — ${asset.name}` : "Ubah data aset IT"}
+          actions={[{ label: "← Kembali", href: "/asset", variant: "secondary" as const }]}
+        />
         <div className="relative z-10 w-full px-6 py-8 sm:px-10">
           <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-4 mb-6">
-              <div>
-                <h1 className="text-3xl font-bold text-text-primary">✏️ Edit Aset</h1>
-                <p className="text-text-secondary mt-1">
-                  {asset ? `${asset.code} — ${asset.name}` : "Ubah data aset IT"}
-                </p>
-              </div>
-            </div>
 
             {error && (
               <div className="bg-red-500/20 border border-red-300 text-red-600 p-4 rounded-lg mb-6">

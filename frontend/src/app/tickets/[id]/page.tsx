@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { useNotificationsContext } from "@/lib/notifications-context";
 import { Sidebar } from "@/components/sidebar";
+import PageHeader from "@/components/page-header";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import {
   Ticket,
@@ -345,16 +346,12 @@ export default function TicketDetailPage() {
     <div className="relative z-0 flex h-screen bg-transparent font-[family-name:var(--font-body)]">
       <Sidebar />
       <main className="flex-1 overflow-y-auto slim-scroll">
-        <div className="sticky-back px-6 sm:px-10">
-        <Link
-          href="/tickets"
-          className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-text-secondary transition-all duration-150 hover:border-accent/50 hover:bg-card-hover hover:text-text-primary"
-        >
-          ← Kembali ke Daftar Tiket
-        </Link>
-        </div>
-
-        <div className="w-full px-6 py-10 sm:px-10">
+        <PageHeader
+          title={ticket.title}
+          subtitle={`Tiket #${ticket.id.slice(0, 8)} · ${STATUS_LABEL[ticket.status]}`}
+          actions={[{ label: "← Kembali ke Daftar Tiket", href: "/tickets", variant: "secondary" as const }]}
+        />
+        <div className="w-full px-6 py-6 sm:px-10">
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">

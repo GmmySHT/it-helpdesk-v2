@@ -9,7 +9,7 @@ interface ActionButton {
   label: string;
   href?: string;
   onClick?: () => void;
-  variant?: "primary" | "secondary";
+  variant?: "primary" | "secondary" | "danger";
   disabled?: boolean;
   icon?: React.ReactNode;
 }
@@ -110,6 +110,8 @@ export default function PageHeader({
             const baseClass =
               action.variant === "primary"
                 ? "rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white transition-all duration-150 hover:bg-accent/90 active:scale-95 disabled:opacity-50"
+                : action.variant === "danger"
+                ? "rounded-md bg-red-500/10 border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 transition-all duration-150 hover:bg-red-500/20 active:scale-95 disabled:opacity-50"
                 : "rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-text-primary transition-all duration-150 hover:border-accent/50 active:scale-95 disabled:opacity-50";
 
             const content = (
