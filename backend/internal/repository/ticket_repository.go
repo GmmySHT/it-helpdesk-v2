@@ -67,8 +67,10 @@ func (r *TicketRepository) List(ctx context.Context, statusFilter string) ([]mod
 	`
 	args := []interface{}{}
 	if statusFilter != "" {
-		query += " WHERE t.status = $1"
+		query += " WHERE t.status = $1 AND t.deleted_at IS NULL"
 		args = append(args, statusFilter)
+	} else {
+		query += " WHERE t.deleted_at IS NULL"
 	}
 	query += " ORDER BY t.created_at DESC"
 
@@ -114,6 +116,7 @@ func (r *TicketRepository) ListForUser(ctx context.Context, statusFilter, userID
 		LEFT JOIN users claimer ON claimer.id = t.claimed_by
 		LEFT JOIN users closer ON closer.id = t.closed_by
 		WHERE (t.created_by = $1 OR t.created_for = $1)
+		AND t.deleted_at IS NULL
 	`
 	args := []interface{}{userID}
 	if statusFilter != "" {
