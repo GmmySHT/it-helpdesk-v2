@@ -67,5 +67,11 @@ type Ticket struct {
 	ClosedByName *string    `json:"closed_by_name,omitempty"`
 	ClosedAt     *time.Time `json:"closed_at,omitempty"`
 
+	// Soft delete — hanya admin yang boleh menghapus tiket
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	DeletedBy     *string    `json:"deleted_by,omitempty"`
+	DeletedByName *string    `json:"deleted_by_name,omitempty"`
+	DeletedReason *string    `json:"deleted_reason,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 }

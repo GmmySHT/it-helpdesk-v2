@@ -1160,3 +1160,15 @@ export function updateDashboardConfig(token: string, monthlyRevenueTarget: numbe
     token
   );
 }
+
+// Ticket soft delete — hanya admin
+export function softDeleteTicket(token: string, ticketId: string, reason: string) {
+  return request<{ ok: boolean }>(`/admin/tickets/${ticketId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  }, token);
+}
+
+export function listDeletedTickets(token: string) {
+  return request<Ticket[]>("/admin/tickets/deleted", {}, token);
+}

@@ -927,8 +927,7 @@ func (s *TicketService) UpdateDeadline(ctx context.Context, ticketID, userID str
 		return nil, err
 	}
 
-	// Beri tahu siapa pun yang sedang "memegang" tiket ini kalau deadline-nya
-	// berubah — supaya tidak kaget kalau tiba-tiba dapat reminder baru.
+	// Beri tahu siapa pun yang sedang "memegang" tiket ini kalau deadline-nya berubah.
 	var owner *string
 	if ticket.ClaimedBy != nil {
 		owner = ticket.ClaimedBy
@@ -944,4 +943,27 @@ func (s *TicketService) UpdateDeadline(ctx context.Context, ticketID, userID str
 	}
 
 	return s.ticketRepo.FindByID(ctx, ticketID)
+}
+
+// SoftDelete menghapus tiket secara soft — hanya admin yang boleh.
+// Tiket tidak hilang dari DB, bisa dilihat via GET /admin/tickets/deleted.
+func (s *TicketService) SoftDelete(ctx context.Context, ticketID, adminID, reason string) error {
+	if err := s.ticketRepo.SoftDelete(ctx, ticketID, adminID, reason); err != nil {
+		return err
+	}
+	adminName := s.actorName(ctx, adminID)
+	msg := "Tiket dihapus oleh admin " + adminName
+	if reason != "" {
+		msg += " — Alasan: " + reason
+	}
+	_, _ = s.db.Exec(ctx,
+		`INSERT INTO ticket_comments (ticket_id, user_id, comment_type, message) VALUES ($1, $2, 'system', $3)`,
+		ticketID, adminID, msg,
+	)
+	return nil
+}
+
+// ListDeleted mengembalikan log semua tiket yang sudah dihapus.
+func (s *TicketService) ListDeleted(ctx context.Context) ([]model.Ticket, error) {
+	return s.ticketRepo.ListDeleted(ctx)
 }

@@ -37,6 +37,8 @@ export default function AssetDetailPage() {
   const [error, setError] = useState("");
 
   const [canManage, setCanManage] = useState(false);
+  // canDelete: staff_it/leader/admin boleh hapus, user/pelapor tidak
+  const canDelete = ["staff_it", "leader", "admin"].includes(user?.role ?? "");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -158,6 +160,8 @@ export default function AssetDetailPage() {
           actions={[
             ...(canManage ? [
               { label: "✏️ Edit", href: `/asset/${asset.id}/edit`, variant: "primary" as const },
+            ] : []),
+            ...(canDelete ? [
               { label: "🗑️ Hapus", onClick: () => setShowDeleteConfirm(true), variant: "danger" as const },
             ] : []),
             { label: "← Kembali", href: "/asset", variant: "secondary" as const },

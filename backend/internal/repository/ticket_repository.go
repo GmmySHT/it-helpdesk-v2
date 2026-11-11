@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -355,4 +356,69 @@ func (r *TicketRepository) MarkSLAReminderSent(ctx context.Context, ticketID str
 func (r *TicketRepository) MarkSLAOverdueNotified(ctx context.Context, ticketID string) error {
 	_, err := r.db.Exec(ctx, `UPDATE tickets SET sla_overdue_notified_at = now() WHERE id = $1`, ticketID)
 	return err
+}
+
+// SoftDelete menandai tiket sebagai dihapus oleh admin.
+// Tiket tidak benar-benar dihapus dari DB — hanya ditandai deleted_at.
+func (r *TicketRepository) SoftDelete(ctx context.Context, ticketID, deletedBy, reason string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE tickets SET deleted_at = now(), deleted_by = $2, deleted_reason = $3 WHERE id = $1 AND deleted_at IS NULL`,
+		ticketID, deletedBy, reason,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("tiket tidak ditemukan atau sudah dihapus")
+	}
+	return nil
+}
+
+// ListDeleted mengambil semua tiket yang sudah di-soft-delete (log penghapusan).
+func (r *TicketRepository) ListDeleted(ctx context.Context) ([]model.Ticket, error) {
+	query := `
+		SELECT t.id, t.title, t.description, t.category_id, t.priority, t.status,
+			t.created_by, creator.name,
+			t.created_for, creator2.name,
+			t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
+			t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
+			t.sla_deadline, t.last_resolved_at, t.reopen_count,
+			t.closed_by, closer.name, t.closed_at,
+			t.deleted_at, t.deleted_by, deleter.name, t.deleted_reason,
+			t.created_at
+		FROM tickets t
+		LEFT JOIN users creator  ON creator.id  = t.created_by
+		LEFT JOIN users creator2 ON creator2.id = t.created_for
+		LEFT JOIN users assignee ON assignee.id = t.assigned_to
+		LEFT JOIN users claimer  ON claimer.id  = t.claimed_by
+		LEFT JOIN users closer   ON closer.id   = t.closed_by
+		LEFT JOIN users deleter  ON deleter.id  = t.deleted_by
+		WHERE t.deleted_at IS NOT NULL
+		ORDER BY t.deleted_at DESC
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tickets []model.Ticket
+	for rows.Next() {
+		var t model.Ticket
+		if err := rows.Scan(
+			&t.ID, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
+			&t.CreatedBy, &t.CreatedByName,
+			&t.CreatedFor, &t.CreatedForName,
+			&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
+			&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
+			&t.SLADeadline, &t.LastResolvedAt, &t.ReopenCount,
+			&t.ClosedBy, &t.ClosedByName, &t.ClosedAt,
+			&t.DeletedAt, &t.DeletedBy, &t.DeletedByName, &t.DeletedReason,
+			&t.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		tickets = append(tickets, t)
+	}
+	return tickets, rows.Err()
 }

@@ -527,3 +527,38 @@ func (h *TicketHandler) UpdateDetails(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, ticket)
 }
+
+// SoftDelete — hanya admin. Tiket tidak dihapus dari DB, hanya ditandai deleted.
+func (h *TicketHandler) SoftDelete(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	adminID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if err := h.ticketService.SoftDelete(r.Context(), id, adminID, req.Reason); err != nil {
+		switch {
+		case errors.Is(err, repository.ErrTicketNotFound):
+			respondError(w, http.StatusNotFound, "tiket tidak ditemukan")
+		default:
+			respondError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ListDeleted — log tiket yang sudah dihapus (soft delete), hanya admin.
+func (h *TicketHandler) ListDeleted(w http.ResponseWriter, r *http.Request) {
+	tickets, err := h.ticketService.ListDeleted(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "gagal mengambil log tiket dihapus")
+		return
+	}
+	if tickets == nil {
+		tickets = []model.Ticket{}
+	}
+	respondJSON(w, http.StatusOK, tickets)
+}

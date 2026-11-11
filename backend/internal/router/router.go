@@ -178,11 +178,18 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			// lewat RBAC.
 			r.Group(func(r chi.Router) {
 				r.Use(appmiddleware.RequireRole(model.RoleLeader, model.RoleAdmin))
-				r.Get("/admin/users", userHandler.ListAll)
-				r.Post("/admin/users", userHandler.Create)
-				r.Put("/admin/users/{id}", userHandler.Update)
-				r.Patch("/admin/users/{id}/status", userHandler.SetActive)
-				r.Delete("/admin/users/{id}", userHandler.Delete)
+					r.Get("/admin/users", userHandler.ListAll)
+					r.Post("/admin/users", userHandler.Create)
+					r.Put("/admin/users/{id}", userHandler.Update)
+					r.Patch("/admin/users/{id}/status", userHandler.SetActive)
+					r.Delete("/admin/users/{id}", userHandler.Delete)
+				})
+
+				// Ticket soft delete + log — hanya admin
+				r.Group(func(r chi.Router) {
+					r.Use(appmiddleware.RequireRole(model.RoleAdmin))
+					r.Delete("/admin/tickets/{id}", ticketHandler.SoftDelete)
+					r.Get("/admin/tickets/deleted", ticketHandler.ListDeleted)
 			})
 			// Statistik tim & tiket berisiko: hanya staff IT, leader, admin.
 			// Role 'user' (pelapor) tidak punya alasan melihat data tim.
@@ -282,10 +289,9 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Group(func(r chi.Router) {
 				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "asset", model.AccessEditor))
 
-				// Asset CRUD (create/update/delete) — hanya editor
+				// Asset CRUD (create/update) — hanya editor
 				r.Post("/assets", assetHandler.CreateAsset)
 				r.Put("/assets/{id}", assetHandler.UpdateAsset)
-				r.Delete("/assets/{id}", assetHandler.DeleteAsset)
 
 				// Borrowing approve/reject — hanya editor (admin/leader)
 				r.Post("/asset-borrowings/{id}/approve", assetHandler.ApproveBorrowing)
@@ -294,6 +300,12 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 				// Disposal — hanya editor
 				r.Post("/assets/{id}/dispose", assetHandler.DisposeAsset)
+			})
+
+			// Asset delete — staff_it, leader, admin (siapapun kecuali user/pelapor)
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireRole(model.RoleStaffIT, model.RoleLeader, model.RoleAdmin))
+				r.Delete("/assets/{id}", assetHandler.DeleteAsset)
 			})
 		})
 	})
