@@ -141,6 +141,41 @@ func (r *UserRepository) FindByID(ctx context.Context, id string) (*model.User, 
 	return &u, nil
 }
 
+// ListReporters mengembalikan user yang PERNAH mengajukan tiket — dipakai
+// dropdown filter "Pelapor" di daftar tiket. Dasarnya tabel tickets, bukan
+// role: pelapor bisa saja staf IT atau leader yang membuat tiket untuk unit
+// lain, jadi membatasi ke role 'user' akan menyembunyikan sebagian pelapor.
+func (r *UserRepository) ListReporters(ctx context.Context) ([]model.User, error) {
+	query := `
+		SELECT u.id, u.name, u.email, u.role, u.department, u.created_at
+		FROM users u
+		WHERE u.id IN (
+			SELECT t.created_by FROM tickets t WHERE t.deleted_at IS NULL
+			UNION
+			SELECT t.created_for FROM tickets t
+			WHERE t.created_for IS NOT NULL AND t.deleted_at IS NULL
+		)
+		ORDER BY u.name
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Slice diinisialisasi kosong (bukan nil): encoding/json mengirim nil slice
+	// sebagai "null", dan frontend langsung memanggil .map() pada hasilnya.
+	users := []model.User{}
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &u.Department, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 // ListByRole dipakai untuk mengisi dropdown "pilih staf" di frontend
 // (misalnya saat leader melakukan reassign paksa atau assign langsung).
 func (r *UserRepository) ListByRole(ctx context.Context, role model.UserRole) ([]model.User, error) {

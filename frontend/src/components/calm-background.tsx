@@ -17,7 +17,7 @@ import { AmbientParticles } from "@/components/ambient-particles";
 
 export function CalmBackground() {
   return (
-    <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+    <div className="calm-background pointer-events-none fixed inset-0 -z-10 overflow-hidden">
       {/* Layer 1: partikel ambient — bergerak & berkelap-kelip */}
       <div className="absolute inset-0">
         <AmbientParticles

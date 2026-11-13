@@ -93,14 +93,22 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
-	statusFilter := r.URL.Query().Get("status")
+	q := r.URL.Query()
+	filter := repository.TicketFilter{
+		Status:     q.Get("status"),
+		ReporterID: q.Get("reporter_id"),
+		AssigneeID: q.Get("assignee_id"),
+	}
 	userID := r.Context().Value(appmiddleware.ContextUserID).(string)
 	role, _ := r.Context().Value(appmiddleware.ContextRole).(model.UserRole)
 
-	tickets, err := h.ticketService.List(r.Context(), statusFilter, userID, string(role))
+	tickets, err := h.ticketService.List(r.Context(), filter, userID, string(role))
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal mengambil daftar tiket")
 		return
+	}
+	if tickets == nil {
+		tickets = []model.Ticket{}
 	}
 
 	respondJSON(w, http.StatusOK, tickets)
@@ -186,10 +194,10 @@ func (h *TicketHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	message := r.FormValue("message")
 	files := r.MultipartForm.File["files"]
 
-	if len(files) == 0 {
-		respondError(w, http.StatusBadRequest, service.ErrResolveNeedsAttachment.Error())
-		return
-	}
+	// Lampiran TIDAK lagi wajib. Bukti visual tetap dianjurkan dan bisa
+	// disisipkan langsung di dalam keterangan lewat editor (gambar inline
+	// tersimpan sebagai URL /uploads/...), jadi tidak perlu memaksa upload
+	// file terpisah — banyak kasus kecil memang tidak punya screenshot.
 
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal menyiapkan folder upload")

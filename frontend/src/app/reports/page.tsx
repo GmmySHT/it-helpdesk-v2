@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/auth-context";
 import { Sidebar } from "@/components/sidebar";
+import { Lock } from "lucide-react";
 import {
   getKPIReport,
   getMyPermissions,
@@ -186,8 +187,14 @@ export default function ReportsPage() {
   // Tiket yang ditampilkan di tabel disaring sesuai rentang tanggal yang
   // sama dengan filter laporan — dilakukan di frontend supaya tidak perlu
   // endpoint /tickets versi khusus laporan.
+  //
+  // Untuk staf IT, tabel ini juga disaring ke tiket yang DIA pegang. Tanpa
+  // itu kartu ringkasan (yang sudah dibatasi server ke tiketnya) akan
+  // bertentangan dengan tabel detail yang berisi tiket seluruh tim — angka
+  // "Tiket Masuk 2" di atas tabel berisi 4 baris.
   const categoryMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const filteredTickets = allTickets.filter((t) => {
+    if (user?.role === "staff_it" && t.claimed_by !== user.id) return false;
     if (!fromDate && !toDate) return true;
     const created = new Date(t.created_at);
     if (fromDate && created < new Date(fromDate)) return false;
@@ -432,6 +439,10 @@ export default function ReportsPage() {
           title="Laporan & KPI"
           subtitle="Ringkasan kinerja tim IT support"
           actions={[
+            // Laporan KPI per orang adalah halaman terpisah: halaman ini
+            // menjawab kondisi antrean tiket, halaman KPI menjawab siapa
+            // mengerjakan apa (tiket + daily task) dan bisa diunduh.
+            { label: "📊 KPI per Staf", href: "/reports/kpi", variant: "primary" as const },
             { label: "Export Excel", onClick: handleExportExcel, variant: "secondary" as const },
             { label: "Export PDF", onClick: handleExportPDF, variant: "secondary" as const },
           ]}
@@ -635,10 +646,20 @@ export default function ReportsPage() {
           </div>
 
           {/* Performa Staf — kinerja tiap staf yang mengerjakan tiket,
-              ikut rentang tanggal yang sama dengan filter laporan. */}
+              ikut rentang tanggal yang sama dengan filter laporan.
+              Untuk staff_it, backend hanya mengirim barisnya sendiri, jadi
+              judulnya diganti "Performa Saya" dan diberi penanda kunci
+              supaya jelas angkanya bukan angka tim. */}
           <div className="mb-6 rounded-lg border border-border bg-card p-6">
-            <p className="mb-4 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
-              Performa Staf ({staffPerformance.length})
+            <p className="mb-4 flex items-center gap-1.5 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+              {user?.role === "staff_it" ? (
+                <>
+                  <Lock className="h-3 w-3" />
+                  Performa Saya
+                </>
+              ) : (
+                <>Performa Staf ({staffPerformance.length})</>
+              )}
             </p>
             {staffPerformance.length === 0 ? (
               <p className="text-center text-xs text-text-muted">

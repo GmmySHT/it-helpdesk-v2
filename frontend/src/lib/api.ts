@@ -29,6 +29,7 @@ export type TicketPriority = "low" | "medium" | "high" | "urgent";
 
 export type Ticket = {
   id: string;
+  ticket_code?: string;
   title: string;
   description: string;
   category_id: string;
@@ -53,6 +54,8 @@ export type Ticket = {
   closed_by_name?: string;
   closed_at?: string;
   created_at: string;
+  // true kalau tiket sudah punya scan BAST bertanda tangan
+  has_signoff?: boolean;
 };
 
 type LoginResponse = {
@@ -168,6 +171,10 @@ export function listStaff(token: string) {
   return request<User[]>("/users/staff", {}, token);
 }
 
+export function listReporters(token: string) {
+  return request<User[]>("/users/reporters", {}, token);
+}
+
 export function listAllUsers(token: string) {
   return request<User[]>("/admin/users", {}, token);
 }
@@ -234,9 +241,85 @@ export function deleteUserByAdmin(token: string, id: string) {
 
 // --- Tickets ---
 
-export function listTickets(token: string, statusFilter?: string) {
-  const query = statusFilter ? `?status=${statusFilter}` : "";
+export type TicketSignoff = {
+  id: string;
+  ticket_id: string;
+  file_url: string;
+  file_name: string;
+  file_type: "image" | "pdf";
+  file_size: number;
+  signed_by_name: string;
+  signed_at?: string;
+  note?: string;
+  uploaded_by: string;
+  uploaded_by_name?: string;
+  created_at: string;
+};
+
+export function listTickets(
+  token: string,
+  filters?: { status?: string; reporterId?: string; assigneeId?: string }
+) {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.reporterId) params.set("reporter_id", filters.reporterId);
+  if (filters?.assigneeId) params.set("assignee_id", filters.assigneeId);
+  const query = params.toString() ? `?${params.toString()}` : "";
   return request<Ticket[]>(`/tickets${query}`, {}, token);
+}
+
+export function listSignoffs(token: string, ticketId: string) {
+  return request<TicketSignoff[]>(`/tickets/${ticketId}/signoffs`, {}, token);
+}
+
+// fileUrl mengubah path relatif dari API ("/uploads/xxx.png") menjadi URL
+// absolut yang bisa dipakai <img src> / <a href>. API base berakhiran
+// "/api/v1", jadi bagian itu dibuang dulu.
+export function fileUrl(path: string) {
+  const base = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api/v1")
+    .replace(/\/api\/v1\/?$/, "");
+  return `${base}${path}`;
+}
+
+export function uploadSignoff(
+  token: string,
+  ticketId: string,
+  input: {
+    file: File;
+    signedByName: string;
+    signedAt?: string;
+    note?: string;
+  }
+) {
+  const formData = new FormData();
+  formData.append("file", input.file);
+  formData.append("signed_by_name", input.signedByName);
+  if (input.signedAt) formData.append("signed_at", input.signedAt);
+  if (input.note) formData.append("note", input.note);
+  return requestFormData<TicketSignoff>(
+    `/tickets/${ticketId}/signoffs`,
+    formData,
+    token
+  );
+}
+
+export async function deleteSignoff(
+  token: string,
+  ticketId: string,
+  signoffId: string
+) {
+  const res = await fetch(
+    `${API_BASE_URL}/tickets/${ticketId}/signoffs/${signoffId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as Partial<ApiError>;
+    throw new Error(body.error || `Gagal menghapus dokumen (${res.status})`);
+  }
 }
 
 export function getTicket(token: string, id: string) {
@@ -1171,4 +1254,238 @@ export function softDeleteTicket(token: string, ticketId: string, reason: string
 
 export function listDeletedTickets(token: string) {
   return request<Ticket[]>("/admin/tickets/deleted", {}, token);
+}
+
+// ── Daily Task ──────────────────────────────────────────────────────────────
+// Pekerjaan harian kecil dari WhatsApp yang tidak pernah jadi tiket resmi.
+// duration_minutes & response_minutes dihitung DATABASE (generated column),
+// jadi frontend hanya menampilkannya — tidak menghitung ulang.
+export type DailyTask = {
+  id: string;
+  task_date: string;
+  reporter_name: string;
+  unit_id?: string | null;
+  unit_name?: string;
+  issue: string;
+  detail?: string;
+  solution?: string;
+  complain_at: string;
+  start_at?: string | null;
+  end_at?: string | null;
+  duration_minutes?: number | null;
+  response_minutes?: number | null;
+  created_by: string;
+  created_by_name?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DailyTaskInput = {
+  task_date: string;
+  reporter_name: string;
+  unit_id?: string | null;
+  issue: string;
+  detail?: string;
+  solution?: string;
+  complain_at: string;
+  start_at?: string | null;
+  end_at?: string | null;
+};
+
+export type Unit = { id: string; name: string };
+
+export function listUnits(token: string) {
+  return request<Unit[]>(`/units`, {}, token);
+}
+
+export function listDailyTasks(
+  token: string,
+  filters: { from?: string; to?: string; unit_id?: string; staff_id?: string; q?: string } = {}
+) {
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  if (filters.unit_id) params.set("unit_id", filters.unit_id);
+  if (filters.staff_id) params.set("staff_id", filters.staff_id);
+  if (filters.q) params.set("q", filters.q);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request<DailyTask[]>(`/daily-tasks${query}`, {}, token);
+}
+
+export function getDailyTask(token: string, id: string) {
+  return request<DailyTask>(`/daily-tasks/${id}`, {}, token);
+}
+
+export function createDailyTask(token: string, input: DailyTaskInput) {
+  return request<DailyTask>(`/daily-tasks`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  }, token);
+}
+
+export function updateDailyTask(token: string, id: string, input: DailyTaskInput) {
+  return request<DailyTask>(`/daily-tasks/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  }, token);
+}
+
+export function deleteDailyTask(token: string, id: string) {
+  return request<{ message: string }>(`/daily-tasks/${id}`, { method: "DELETE" }, token);
+}
+
+// ── KPI gabungan (tiket + daily task) ───────────────────────────────────────
+export type StaffKPI = {
+  staff_id: string;
+  staff_name: string;
+  role: string;
+  department?: string;
+  tickets_resolved: number;
+  avg_resolution_minutes: number;
+  sla_compliant_count: number;
+  sla_compliance_rate: number;
+  reopen_count: number;
+  daily_tasks: number;
+  avg_daily_duration_minutes: number;
+  avg_daily_response_minutes: number;
+  total_work_items: number;
+};
+
+export type KPIOverview = {
+  from?: string;
+  to?: string;
+  total_tickets: number;
+  tickets_resolved: number;
+  total_daily_tasks: number;
+  total_work_items: number;
+  avg_ticket_resolution_minutes: number;
+  avg_daily_duration_minutes: number;
+  avg_daily_response_minutes: number;
+  per_unit: { unit_name: string; count: number }[];
+};
+
+/**
+ * Balasan KPI membawa cakupan yang ditentukan SERVER, bukan UI.
+ * can_view_all=false berarti server memaksa laporan ke staf yang login
+ * (staff_it), scope_staff_id berisi id orang itu — frontend memakai nilai ini
+ * untuk menyembunyikan dropdown staf, supaya penyaringan tidak ditawarkan
+ * padahal server akan mengabaikannya.
+ */
+export type StaffKPIPayload = {
+  overview: KPIOverview;
+  staff: StaffKPI[];
+  can_view_all?: boolean;
+  scope_staff_id?: string;
+};
+
+/**
+ * Rincian pekerjaan satu staf untuk laporan cetak. Angka ringkas tetap dari
+ * StaffKPI supaya jumlah baris rincian selalu cocok dengan kolom "Tiket
+ * Selesai" / "Daily Task" pada tabel ringkasan.
+ */
+export type KPITicketRow = {
+  ticket_code: string;
+  title: string;
+  category_name: string;
+  priority: string;
+  status: string;
+  claimed_at?: string;
+  resolved_at?: string;
+  minutes: number;
+  sla_compliant: boolean;
+};
+
+export type KPIDailyRow = {
+  task_date: string;
+  reporter_name: string;
+  unit_name: string;
+  issue: string;
+  detail: string;
+  solution: string;
+  complain_at: string;
+  start_at?: string;
+  end_at?: string;
+  response_minutes?: number;
+  duration_minutes?: number;
+};
+
+export type StaffKPIDetail = {
+  staff: StaffKPI;
+  tickets: KPITicketRow[];
+  daily_tasks: KPIDailyRow[];
+};
+
+export type StaffKPIDetailPayload = {
+  overview: KPIOverview;
+  details: StaffKPIDetail[];
+  can_view_all?: boolean;
+  scope_staff_id?: string;
+};
+
+export function getStaffKPIDetail(token: string, from?: string, to?: string, staffId?: string) {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (staffId) params.set("staff_id", staffId);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request<StaffKPIDetailPayload>(`/reports/kpi/detail${query}`, {}, token);
+}
+
+export function getStaffKPI(token: string, from?: string, to?: string, staffId?: string) {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (staffId) params.set("staff_id", staffId);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request<StaffKPIPayload>(`/reports/kpi/staff${query}`, {}, token);
+}
+
+/**
+ * Unduh CSV lewat fetch (bukan <a href>) karena endpoint butuh header
+ * Authorization. Token disimpan di memori → file blob dibuat → link
+ * diklik program → blob dilepas. Token TIDAK pernah masuk URL/log server.
+ */
+export async function downloadKPIExport(
+  token: string,
+  from?: string,
+  to?: string,
+  staffId?: string
+) {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (staffId) params.set("staff_id", staffId);
+  const query = params.toString() ? `?${params.toString()}` : "";
+
+  const res = await fetch(`${API_BASE_URL}/reports/kpi/export${query}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    let msg = "Gagal mengunduh laporan";
+    try {
+      const data = await res.json();
+      // Backend memakai field "error" (lihat helper request() di atas).
+      if (data?.error) msg = data.error;
+      else if (data?.message) msg = data.message;
+    } catch {
+      /* respons bukan JSON — pakai pesan default */
+    }
+    throw new Error(msg);
+  }
+
+  // Nama file diambil dari header Content-Disposition supaya periode dan
+  // nama staf di file sama dengan yang dipilih di halaman.
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^";]+)"?/);
+  const filename = match ? match[1] : "laporan-kpi.csv";
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }

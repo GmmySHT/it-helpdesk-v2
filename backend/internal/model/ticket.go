@@ -34,6 +34,7 @@ const (
 // di database — misalnya AssignedTo baru terisi kalau leader meng-assign tiket.
 type Ticket struct {
 	ID          string         `json:"id"`
+	TicketCode  string         `json:"ticket_code"` // mis. SIMRS-00019
 	Title       string         `json:"title"`
 	Description string         `json:"description"`
 	CategoryID  string         `json:"category_id"`
@@ -74,4 +75,9 @@ type Ticket struct {
 	DeletedReason *string    `json:"deleted_reason,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
+
+	// HasSignoff menandai tiket sudah punya scan BAST bertanda tangan.
+	// Dihitung di query (EXISTS) supaya daftar tiket bisa menampilkan badge
+	// bukti tanpa harus mengambil semua dokumen.
+	HasSignoff bool `json:"has_signoff"`
 }

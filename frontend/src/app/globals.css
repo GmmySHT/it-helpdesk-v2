@@ -487,3 +487,101 @@ select option:checked {
   justify-content: flex-end;
   padding-right: 2rem;
 }
+
+/* ==========================================================================
+   Cetak dokumen (BAST tiket)
+   Halaman /tickets/[id]/print adalah dokumen kertas, bukan bagian aplikasi.
+   Saat dicetak: latar aurora/particle dimatikan, toolbar "no-print"
+   disembunyikan, dan warna paksa hitam-putih supaya hemat tinta & terbaca.
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm 12mm;
+  }
+
+  /* Latar animasi tidak ada gunanya di kertas.
+     PENTING: .page-transition JANGAN disembunyikan — dia wrapper semua
+     konten di layout.tsx, menyembunyikannya membuat halaman cetak kosong. */
+  .calm-background,
+  .toast-container,
+  .floating-notifications {
+    display: none !important;
+  }
+
+  /* Wrapper konten harus tetap mengalir normal di kertas; animasi fade
+     bisa membuat isi tertinggal di opacity 0 saat snapshot cetak. */
+  .page-transition {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    display: block !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Paksa hitam-putih: warna tema gelap akan tercetak sebagai blok gelap. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  table,
+  section,
+  .signature-block {
+    page-break-inside: avoid;
+  }
+
+  h1,
+  h2 {
+    page-break-after: avoid;
+  }
+
+  /* Isi deskripsi tiket (HTML dari rich text editor) di dokumen cetak.
+     Gambar harus muat lebar kertas dan tidak terbelah dua halaman. */
+  .print-rich p {
+    margin: 0 0 0.4rem;
+  }
+
+  .print-rich ul {
+    list-style: disc !important;
+    padding-left: 1.4rem !important;
+    margin: 0 0 0.4rem;
+  }
+
+  .print-rich ol {
+    list-style: decimal !important;
+    padding-left: 1.4rem !important;
+    margin: 0 0 0.4rem;
+  }
+
+  .print-rich li {
+    display: list-item !important;
+  }
+
+  .print-rich a {
+    color: #000 !important;
+    text-decoration: underline;
+    word-break: break-all;
+  }
+
+  .print-rich img {
+    max-width: 100% !important;
+    height: auto !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    display: block;
+    margin: 0.35rem 0;
+  }
+}

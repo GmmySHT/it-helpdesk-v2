@@ -207,14 +207,17 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 	return ticket, nil
 }
 
-func (s *TicketService) List(ctx context.Context, statusFilter, userID, role string) ([]model.Ticket, error) {
-	// Leader/admin/staff: lihat semua tiket (termasuk unassigned untuk di-claim)
-	// User biasa: hanya lihat tiket yg dibuat olehnya ATAU dibuat untuk dirinya
+// List menampilkan tiket sesuai role. filter.Status / filter.ReporterID /
+// filter.AssigneeID semuanya opsional (string kosong = tidak memfilter).
+//
+// Leader/admin/staff melihat semua tiket (termasuk unassigned untuk di-claim).
+// User biasa hanya melihat tiket yang dibuat olehnya ATAU untuk dirinya —
+// filter pelapor diabaikan untuk mereka karena hasilnya sudah terbatas.
+func (s *TicketService) List(ctx context.Context, filter repository.TicketFilter, userID, role string) ([]model.Ticket, error) {
 	if role == string(model.RoleLeader) || role == string(model.RoleAdmin) || role == string(model.RoleStaffIT) {
-		return s.ticketRepo.List(ctx, statusFilter)
+		return s.ticketRepo.ListFiltered(ctx, filter)
 	}
-	// User biasa: pakai ListForUser
-	return s.ticketRepo.ListForUser(ctx, statusFilter, userID)
+	return s.ticketRepo.ListForUser(ctx, filter, userID)
 }
 
 // ListAtRisk dipakai widget "Tiket Berisiko" di dashboard leader/admin —
@@ -332,10 +335,10 @@ type ResolveInput struct {
 	AttachmentURLs []string // path/URL file yang sudah disimpan handler sebelum sampai ke service ini
 }
 
-// Resolve menjalankan 3 perubahan sekaligus dalam SATU transaction database:
+// Resolve menjalankan perubahan status tiket dalam SATU transaction database:
 //  1. Update status tiket jadi 'resolved'
 //  2. Simpan catatan resolve (wajib diisi) sebagai ticket_comment
-//  3. Simpan lampiran gambar (wajib minimal 1) sebagai comment_attachments
+//  3. Simpan lampiran gambar bila ada (OPSIONAL — tidak lagi wajib)
 //
 // Kenapa harus transaction? Supaya tidak ada kondisi "setengah jadi" —
 // misalnya status tiket sudah berubah tapi catatan resolve gagal tersimpan
@@ -344,9 +347,6 @@ type ResolveInput struct {
 func (s *TicketService) Resolve(ctx context.Context, input ResolveInput) (*model.Ticket, error) {
 	if input.Message == "" {
 		return nil, errors.New("keterangan resolve wajib diisi")
-	}
-	if len(input.AttachmentURLs) == 0 {
-		return nil, ErrResolveNeedsAttachment
 	}
 
 	tx, err := s.db.Begin(ctx)

@@ -45,6 +45,15 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: "Tiket", href: "/tickets", icon: "🎫" },
   {
+    // Daily Task = pekerjaan harian kecil dari WhatsApp. Bukan tiket, tapi
+    // masuk perhitungan KPI staf — jadi menunya diletakkan tepat sebelum
+    // Laporan & KPI. Pelapor tidak melihat menu ini.
+    label: "Daily Task",
+    href: "/daily-tasks",
+    icon: "📝",
+    visibleForRoles: ["staff_it", "leader", "admin"],
+  },
+  {
     label: "Aset IT",
     href: "/asset",
     icon: "💻",

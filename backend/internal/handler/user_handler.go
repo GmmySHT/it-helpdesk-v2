@@ -34,6 +34,19 @@ func (h *UserHandler) ListStaff(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, staff)
 }
 
+// ListReporters mengembalikan user yang PERNAH mengajukan tiket — dipakai
+// dropdown filter "Pelapor" di daftar tiket. Dasarnya tabel tickets (bukan
+// role), karena pelapor bisa juga staf IT / leader yang membuat tiket untuk
+// unit lain; membatasi ke role 'user' akan menyembunyikan sebagian pelapor.
+func (h *UserHandler) ListReporters(w http.ResponseWriter, r *http.Request) {
+	users, err := h.userRepo.ListReporters(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "gagal mengambil daftar pelapor")
+		return
+	}
+	respondJSON(w, http.StatusOK, users)
+}
+
 // ListAll mengembalikan SEMUA user — dipakai halaman Manajemen User
 // (leader/admin only, dijaga middleware di router).
 func (h *UserHandler) ListAll(w http.ResponseWriter, r *http.Request) {

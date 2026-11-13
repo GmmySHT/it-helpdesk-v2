@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS daily_tasks;
+DROP TABLE IF EXISTS units;

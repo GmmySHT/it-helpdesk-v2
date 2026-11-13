@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,21 +28,78 @@ func NewTicketRepository(db *pgxpool.Pool) *TicketRepository {
 // Create menyimpan tiket baru. Status dan assigned_* sudah ditentukan
 // oleh service SEBELUM sampai di sini (repository tidak berisi logika bisnis,
 // hanya mengeksekusi query).
+//
+// Kode tiket (SIMRS-00019) dibuat di dalam transaksi yang sama dengan INSERT:
+// penomoran memakai UPDATE ... RETURNING pada ticket_code_counters, yang
+// bersifat atomik, jadi dua tiket yang dibuat bersamaan tidak akan pernah
+// mendapat nomor yang sama.
 func (r *TicketRepository) Create(ctx context.Context, t *model.Ticket) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var prefix string
+	// Prefix diambil dari kategori. Kalau kategori tidak ditemukan, INSERT
+	// di bawah akan gagal pada foreign key dan transaksi di-rollback.
+	err = tx.QueryRow(ctx, `SELECT code FROM categories WHERE id = $1`, t.CategoryID).Scan(&prefix)
+	if err != nil {
+		return err
+	}
+
+	var lastNumber int
+	err = tx.QueryRow(ctx, `
+		INSERT INTO ticket_code_counters (prefix, last_number)
+		VALUES ($1, 1)
+		ON CONFLICT (prefix) DO UPDATE
+			SET last_number = ticket_code_counters.last_number + 1
+		RETURNING last_number
+	`, prefix).Scan(&lastNumber)
+	if err != nil {
+		return err
+	}
+
+	t.TicketCode = fmt.Sprintf("%s-%05d", prefix, lastNumber)
+
 	query := `
 		INSERT INTO tickets (
-			title, description, category_id, priority, status,
+			ticket_code, title, description, category_id, priority, status,
 			created_by, created_for, assigned_to, assigned_by, assigned_at, sla_deadline
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, reopen_count, created_at
 	`
-	err := r.db.QueryRow(ctx, query,
-		t.Title, t.Description, t.CategoryID, t.Priority, t.Status,
+	err = tx.QueryRow(ctx, query,
+		t.TicketCode, t.Title, t.Description, t.CategoryID, t.Priority, t.Status,
 		t.CreatedBy, t.CreatedFor, t.AssignedTo, t.AssignedBy, t.AssignedAt, t.SLADeadline,
 	).Scan(&t.ID, &t.ReopenCount, &t.CreatedAt)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
+
+// ticketListSelect adalah SELECT + JOIN dasar untuk semua query daftar/detail
+// tiket. Dipakai bersama supaya urutan kolom yang di-Scan selalu sinkron
+// dengan queryTickets/FindByID.
+const ticketListSelect = `
+	SELECT t.id, COALESCE(t.ticket_code, ''), t.title, t.description, t.category_id, t.priority, t.status,
+		t.created_by, creator.name,
+		t.created_for, creator2.name,
+		t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
+		t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
+		t.sla_deadline, t.last_resolved_at, t.reopen_count,
+		t.closed_by, closer.name, t.closed_at, t.created_at,
+	EXISTS (SELECT 1 FROM ticket_signoffs s WHERE s.ticket_id = t.id) AS has_signoff
+	FROM tickets t
+	LEFT JOIN users creator ON creator.id = t.created_by
+	LEFT JOIN users creator2 ON creator2.id = t.created_for
+	LEFT JOIN users assignee ON assignee.id = t.assigned_to
+	LEFT JOIN users claimer ON claimer.id = t.claimed_by
+	LEFT JOIN users closer ON closer.id = t.closed_by
+`
 
 // List mengambil daftar tiket, opsional difilter berdasarkan status.
 // Filter status kosong ("") berarti ambil semua tiket.
@@ -50,30 +108,59 @@ func (r *TicketRepository) Create(ctx context.Context, t *model.Ticket) error {
 // NULL (tiket yang belum diklaim/ditutup) — kalau pakai JOIN biasa, baris
 // tiket yang belum diklaim akan HILANG dari hasil sama sekali.
 func (r *TicketRepository) List(ctx context.Context, statusFilter string) ([]model.Ticket, error) {
-	query := `
-		SELECT t.id, t.title, t.description, t.category_id, t.priority, t.status,
-			t.created_by, creator.name,
-			t.created_for, creator2.name,
-			t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
-			t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
-			t.sla_deadline, t.last_resolved_at, t.reopen_count,
-			t.closed_by, closer.name, t.closed_at, t.created_at
-		FROM tickets t
-		LEFT JOIN users creator ON creator.id = t.created_by
-		LEFT JOIN users creator2 ON creator2.id = t.created_for
-		LEFT JOIN users assignee ON assignee.id = t.assigned_to
-		LEFT JOIN users claimer ON claimer.id = t.claimed_by
-		LEFT JOIN users closer ON closer.id = t.closed_by
-	`
-	args := []interface{}{}
-	if statusFilter != "" {
-		query += " WHERE t.status = $1 AND t.deleted_at IS NULL"
-		args = append(args, statusFilter)
-	} else {
-		query += " WHERE t.deleted_at IS NULL"
-	}
-	query += " ORDER BY t.created_at DESC"
+	return r.ListFiltered(ctx, TicketFilter{Status: statusFilter})
+}
 
+// TicketFilter menampung semua filter daftar tiket. Kosong ("") berarti
+// tidak memfilter kolom tersebut. ReporterID mencocokkan pelapor (created_by)
+// ATAU pihak yang ditiketkan (created_for) — dari sudut pandang helpdesk,
+// keduanya adalah "unit pelapor".
+type TicketFilter struct {
+	Status     string
+	ReporterID string
+	AssigneeID string
+}
+
+// buildFilterClause menyusun potongan WHERE + args secara berurutan, supaya
+// penomoran $1/$2 dst tidak perlu dihitung manual di tiap query.
+func (f TicketFilter) buildFilterClause(startIdx int) (string, []interface{}) {
+	clause := ""
+	args := []interface{}{}
+	idx := startIdx
+
+	if f.Status != "" {
+		idx++
+		clause += " AND t.status = $" + itoa(idx)
+		args = append(args, f.Status)
+	}
+	if f.ReporterID != "" {
+		idx++
+		clause += " AND (t.created_by = $" + itoa(idx) + " OR t.created_for = $" + itoa(idx) + ")"
+		args = append(args, f.ReporterID)
+	}
+	if f.AssigneeID != "" {
+		idx++
+		clause += " AND (t.claimed_by = $" + itoa(idx) + " OR t.assigned_to = $" + itoa(idx) + ")"
+		args = append(args, f.AssigneeID)
+	}
+	return clause, args
+}
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
+}
+
+func (r *TicketRepository) ListFiltered(ctx context.Context, f TicketFilter) ([]model.Ticket, error) {
+	query := ticketListSelect + " WHERE t.deleted_at IS NULL"
+	clause, args := f.buildFilterClause(0)
+	query += clause + " ORDER BY t.created_at DESC"
+	return r.queryTickets(ctx, query, args...)
+}
+
+// queryTickets menjalankan query daftar tiket dan memindai hasilnya ke
+// []model.Ticket — dipakai bersama oleh List/ListFiltered/ListForUser supaya
+// urutan Scan tidak pernah berbeda antar query.
+func (r *TicketRepository) queryTickets(ctx context.Context, query string, args ...interface{}) ([]model.Ticket, error) {
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -84,13 +171,14 @@ func (r *TicketRepository) List(ctx context.Context, statusFilter string) ([]mod
 	for rows.Next() {
 		var t model.Ticket
 		if err := rows.Scan(
-			&t.ID, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
+			&t.ID, &t.TicketCode, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
 			&t.CreatedBy, &t.CreatedByName,
 			&t.CreatedFor, &t.CreatedForName,
 			&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 			&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
 			&t.SLADeadline, &t.LastResolvedAt, &t.ReopenCount,
 			&t.ClosedBy, &t.ClosedByName, &t.ClosedAt, &t.CreatedAt,
+			&t.HasSignoff,
 		); err != nil {
 			return nil, err
 		}
@@ -100,82 +188,33 @@ func (r *TicketRepository) List(ctx context.Context, statusFilter string) ([]mod
 }
 
 // ListForUser returns tickets created by OR for the user (untuk role user biasa).
-func (r *TicketRepository) ListForUser(ctx context.Context, statusFilter, userID string) ([]model.Ticket, error) {
-	query := `
-		SELECT t.id, t.title, t.description, t.category_id, t.priority, t.status,
-			t.created_by, creator.name,
-			t.created_for, creator2.name,
-			t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
-			t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
-			t.sla_deadline, t.last_resolved_at, t.reopen_count,
-			t.closed_by, closer.name, t.closed_at, t.created_at
-		FROM tickets t
-		LEFT JOIN users creator ON creator.id = t.created_by
-		LEFT JOIN users creator2 ON creator2.id = t.created_for
-		LEFT JOIN users assignee ON assignee.id = t.assigned_to
-		LEFT JOIN users claimer ON claimer.id = t.claimed_by
-		LEFT JOIN users closer ON closer.id = t.closed_by
+// Filter status/pelapor/pengerja tetap dihormati: user biasa hanya melihat
+// tiketnya sendiri, jadi filter pelapor efektif mengosongkan hasil bila ia
+// memilih orang lain — itu perilaku yang benar, bukan bug.
+func (r *TicketRepository) ListForUser(ctx context.Context, f TicketFilter, userID string) ([]model.Ticket, error) {
+	query := ticketListSelect + `
 		WHERE (t.created_by = $1 OR t.created_for = $1)
 		AND t.deleted_at IS NULL
 	`
 	args := []interface{}{userID}
-	if statusFilter != "" {
-		query += " AND t.status = $2"
-		args = append(args, statusFilter)
-	}
-	query += " ORDER BY t.created_at DESC"
-
-	rows, err := r.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tickets []model.Ticket
-	for rows.Next() {
-		var t model.Ticket
-		if err := rows.Scan(
-			&t.ID, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
-			&t.CreatedBy, &t.CreatedByName,
-			&t.CreatedFor, &t.CreatedForName,
-			&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
-			&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
-			&t.SLADeadline, &t.LastResolvedAt, &t.ReopenCount,
-			&t.ClosedBy, &t.ClosedByName, &t.ClosedAt, &t.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		tickets = append(tickets, t)
-	}
-	return tickets, rows.Err()
+	clause, extra := f.buildFilterClause(1)
+	query += clause + " ORDER BY t.created_at DESC"
+	args = append(args, extra...)
+	return r.queryTickets(ctx, query, args...)
 }
 
 func (r *TicketRepository) FindByID(ctx context.Context, id string) (*model.Ticket, error) {
-	query := `
-		SELECT t.id, t.title, t.description, t.category_id, t.priority, t.status,
-			t.created_by, creator.name,
-			t.created_for, creator2.name,
-			t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
-			t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
-			t.sla_deadline, t.last_resolved_at, t.reopen_count,
-			t.closed_by, closer.name, t.closed_at, t.created_at
-		FROM tickets t
-		LEFT JOIN users creator ON creator.id = t.created_by
-		LEFT JOIN users creator2 ON creator2.id = t.created_for
-		LEFT JOIN users assignee ON assignee.id = t.assigned_to
-		LEFT JOIN users claimer ON claimer.id = t.claimed_by
-		LEFT JOIN users closer ON closer.id = t.closed_by
-		WHERE t.id = $1
-	`
+	query := ticketListSelect + " WHERE t.id = $1"
 	var t model.Ticket
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&t.ID, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
+		&t.ID, &t.TicketCode, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
 		&t.CreatedBy, &t.CreatedByName,
 		&t.CreatedFor, &t.CreatedForName,
 		&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 		&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
 		&t.SLADeadline, &t.LastResolvedAt, &t.ReopenCount,
 		&t.ClosedBy, &t.ClosedByName, &t.ClosedAt, &t.CreatedAt,
+		&t.HasSignoff,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

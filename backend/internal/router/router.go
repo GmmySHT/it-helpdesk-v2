@@ -60,6 +60,11 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 		AllowedOrigins:   opts.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		// Content-Disposition perlu dibaca JS agar nama file unduhan (mis.
+		// "kpi-budi-20261101_20261130.csv") dipakai apa adanya. Tanpa ini
+		// browser menyembunyikan header tersebut dan file tersimpan dengan
+		// nama generik.
+		ExposedHeaders:   []string{"Content-Disposition"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -102,6 +107,13 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 	statsRepo := repository.NewStatsRepository(db)
 	statsHandler := handler.NewStatsHandler(statsRepo)
 
+	// Modul Daily Task — catatan pekerjaan harian di luar tiket.
+	dailyTaskRepo := repository.NewDailyTaskRepository(db)
+	dailyTaskHandler := handler.NewDailyTaskHandler(dailyTaskRepo)
+
+	// Laporan KPI gabungan (tiket + daily task) beserta ekspor CSV.
+	kpiHandler := handler.NewKPIHandler(statsRepo)
+
 	// Monitoring module
 	monitoringRepo := repository.NewMonitoringRepository(db, simrsDB)
 	monitoringService := service.NewMonitoringService(monitoringRepo)
@@ -120,6 +132,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 	commentHandler := handler.NewCommentHandler(commentRepo, ticketRepo, userRepo, notifService)
 	uploadHandler := handler.NewUploadHandler()
+
+	// Bukti serah-terima (BAST) yang sudah ditandatangani pelapor.
+	signoffRepo := repository.NewTicketSignoffRepository(db)
+	signoffHandler := handler.NewSignoffHandler(signoffRepo, ticketRepo)
 
 	// Asset management repositories & services
 	assetRepo := repository.NewAssetRepository(db)
@@ -170,6 +186,9 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 			r.Get("/categories", categoryHandler.List)
 			r.Get("/users/staff", userHandler.ListStaff)
+		// Daftar pelapor (role user) untuk dropdown filter di daftar tiket.
+		// Semua role yang login boleh membaca — hanya nama & departemen.
+		r.Get("/users/reporters", userHandler.ListReporters)
 
 			// Manajemen User — HANYA leader/admin. Ini sengaja pakai
 			// RequireRole (bukan RequireModuleAccess seperti Laporan/Akses)
@@ -228,6 +247,25 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 				r.Get("/reports/category-breakdown", statsHandler.CategoryBreakdown)
 				r.Get("/reports/staff-performance", statsHandler.StaffPerformanceRange)
 				r.Get("/reports/asset-borrowing-stats", statsHandler.AssetBorrowingStats)
+
+				// KPI gabungan tiket + daily task, plus unduhan CSV dan
+				// rincian untuk dokumen cetak.
+				r.Get("/reports/kpi/staff", kpiHandler.StaffKPI)
+				r.Get("/reports/kpi/detail", kpiHandler.StaffKPIDetail)
+				r.Get("/reports/kpi/export", kpiHandler.StaffKPIExport)
+			})
+
+			// Daily Task — staff_it/leader/admin boleh mencatat. Staf hanya
+			// melihat catatannya sendiri (dijaga di handler), leader/admin
+			// melihat semua.
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireRole(model.RoleStaffIT, model.RoleLeader, model.RoleAdmin))
+				r.Get("/units", dailyTaskHandler.ListUnits)
+				r.Get("/daily-tasks", dailyTaskHandler.List)
+				r.Get("/daily-tasks/{id}", dailyTaskHandler.Get)
+				r.Post("/daily-tasks", dailyTaskHandler.Create)
+				r.Put("/daily-tasks/{id}", dailyTaskHandler.Update)
+				r.Delete("/daily-tasks/{id}", dailyTaskHandler.Delete)
 			})
 
 			r.Post("/tickets/{id}/rating", ratingHandler.Create)
@@ -235,6 +273,12 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 			r.Get("/tickets/{id}/comments", commentHandler.ListByTicket)
 			r.Post("/tickets/{id}/comments", commentHandler.Create)
+
+			// Bukti serah-terima bertanda tangan pelapor (scan BAST).
+			r.Get("/tickets/{id}/signoffs", signoffHandler.List)
+			r.Post("/tickets/{id}/signoffs", signoffHandler.Create)
+			r.Delete("/tickets/{id}/signoffs/{signoffId}", signoffHandler.Delete)
+
 			r.Post("/uploads/inline-image", uploadHandler.UploadInlineImage)
 
 			r.Get("/notifications", notifHandler.List)

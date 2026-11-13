@@ -15,6 +15,7 @@ import {
   listTickets,
   listCategories,
   listStaff,
+  listReporters,
   listAllUsers,
   createTicket,
 } from "@/lib/api";
@@ -70,8 +71,10 @@ export function TicketsContent() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [reporters, setReporters] = useState<User[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [staffFilter, setStaffFilter] = useState("");
+  const [reporterFilter, setReporterFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
 
@@ -101,7 +104,13 @@ export function TicketsContent() {
   async function loadTickets() {
     if (!token) return;
     try {
-      const data = await listTickets(token, statusFilter || undefined);
+      // Filter pelapor & pengerja dikirim ke server, bukan disaring di browser:
+      // daftar tiket bisa besar dan ListForUser (role user) sudah dibatasi server.
+      const data = await listTickets(token, {
+        status: statusFilter || undefined,
+        reporterId: reporterFilter || undefined,
+        assigneeId: staffFilter || undefined,
+      });
       setTickets(data || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat tiket");
@@ -111,11 +120,19 @@ export function TicketsContent() {
   useEffect(() => {
     if (!token) return;
     loadTickets();
-    listCategories(token).then(setCategories).catch(() => {});
-    listStaff(token).then(setStaff).catch(() => {});
-    listAllUsers(token).then(setUsers).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, statusFilter]);
+  }, [token, statusFilter, reporterFilter, staffFilter]);
+
+  // Data pendukung (kategori, daftar staf, daftar pelapor) tidak bergantung
+  // pada filter — dimuat sekali per sesi, bukan setiap kali filter berubah.
+  useEffect(() => {
+    if (!token) return;
+    listCategories(token).then((d) => setCategories(d || [])).catch(() => {});
+    listStaff(token).then((d) => setStaff(d || [])).catch(() => {});
+    listReporters(token).then((d) => setReporters(d || [])).catch(() => {});
+    listAllUsers(token).then((d) => setUsers(d || [])).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   useEffect(() => {
     if (!token || lastMessageAt === 0) return;
@@ -175,12 +192,12 @@ export function TicketsContent() {
     "mb-1.5 block text-xs font-medium uppercase tracking-wide text-text-muted";
 
   const filteredTickets = tickets.filter((t) => {
-    if (staffFilter && t.claimed_by !== staffFilter) return false;
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
       t.title.toLowerCase().includes(q) ||
-      t.description.toLowerCase().includes(q)
+      t.description.toLowerCase().includes(q) ||
+      (t.ticket_code || "").toLowerCase().includes(q)
     );
   });
 
@@ -377,9 +394,23 @@ export function TicketsContent() {
           )}
 
           <select
+            value={reporterFilter}
+            onChange={(e) => setReporterFilter(e.target.value)}
+            className="ml-auto rounded-md border border-border bg-card-hover px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent"
+          >
+            <option value="">Semua Pelapor</option>
+            {reporters.map((u) => (
+              <option key={u.id} value={u.id}>
+                Pelapor: {u.name}
+                {u.department ? ` — ${u.department}` : ""}
+              </option>
+            ))}
+          </select>
+
+          <select
             value={staffFilter}
             onChange={(e) => setStaffFilter(e.target.value)}
-            className="ml-auto rounded-md border border-border bg-card-hover px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent"
+            className="rounded-md border border-border bg-card-hover px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent"
           >
             <option value="">Semua Staf</option>
             {staff.map((s) => (
@@ -388,6 +419,19 @@ export function TicketsContent() {
               </option>
             ))}
           </select>
+
+          {(reporterFilter || staffFilter || statusFilter) && (
+            <button
+              onClick={() => {
+                setReporterFilter("");
+                setStaffFilter("");
+                setStatusFilter("");
+              }}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-muted transition-all duration-150 hover:border-red/40 hover:text-red"
+            >
+              Reset filter
+            </button>
+          )}
         </div>
 
         <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -409,6 +453,14 @@ export function TicketsContent() {
                       className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[t.status]}`}
                     />
                     <div className="min-w-0 flex-1">
+                      {/* Kode tiket (SIMRS-00019) ditampilkan sebelum judul
+                          supaya staf & pelapor bisa menyebut satu nomor saat
+                          berkomunikasi lewat WA/telepon. */}
+                      {t.ticket_code && (
+                        <p className="font-[family-name:var(--font-display)] text-[10px] uppercase tracking-wide text-accent">
+                          {t.ticket_code}
+                        </p>
+                      )}
                       <p className="truncate text-sm font-medium text-text-primary">
                         {t.title}
                       </p>
@@ -428,12 +480,22 @@ export function TicketsContent() {
                             Untuk: {t.created_for_name}
                           </span>
                         )}
+                        {t.has_signoff && (
+                          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-[family-name:var(--font-display)] text-[10px] uppercase tracking-wide text-emerald-400">
+                            BAST ✓
+                          </span>
+                        )}
                       </div>
-                      {(t.claimed_by_name || t.last_resolved_at) && (
+                      {(t.created_by_name || t.claimed_by_name || t.last_resolved_at) && (
                         <p className="font-[family-name:var(--font-display)] text-[11px] text-text-muted">
+                          {t.created_by_name && (
+                            <>
+                              Pelapor <span className="text-text-secondary">{t.created_by_name}</span>
+                            </>
+                          )}
                           {t.claimed_by_name && (
                             <>
-                              Dikerjakan oleh <span className="text-text-secondary">{t.claimed_by_name}</span>
+                              {" · "}Dikerjakan oleh <span className="text-text-secondary">{t.claimed_by_name}</span>
                             </>
                           )}
                           {t.claimed_at && (

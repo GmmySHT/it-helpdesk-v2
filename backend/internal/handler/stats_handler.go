@@ -109,8 +109,9 @@ func (h *StatsHandler) MyStatusBreakdown(w http.ResponseWriter, r *http.Request)
 // opsional lewat query param ?from=2026-01-01&to=2026-01-31 (format YYYY-MM-DD).
 func (h *StatsHandler) KPIReport(w http.ResponseWriter, r *http.Request) {
 	from, to := parseDateRange(r)
+	staffID, _ := resolveStaffScope(r)
 
-	report, err := h.statsRepo.GetKPIReport(r.Context(), from, to)
+	report, err := h.statsRepo.GetKPIReport(r.Context(), from, to, staffID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal menghitung laporan")
 		return
@@ -140,6 +141,7 @@ func parseDateRange(r *http.Request) (from, to *time.Time) {
 // "N hari terakhir". Default 30 hari terakhir kalau user belum pilih filter.
 func (h *StatsHandler) TrendRange(w http.ResponseWriter, r *http.Request) {
 	from, to := parseDateRange(r)
+	staffID, _ := resolveStaffScope(r)
 
 	toVal := time.Now()
 	if to != nil {
@@ -150,7 +152,7 @@ func (h *StatsHandler) TrendRange(w http.ResponseWriter, r *http.Request) {
 		fromVal = *from
 	}
 
-	points, err := h.statsRepo.GetTrendRange(r.Context(), fromVal, toVal)
+	points, err := h.statsRepo.GetTrendRange(r.Context(), fromVal, toVal, staffID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal mengambil data tren")
 		return
@@ -160,8 +162,9 @@ func (h *StatsHandler) TrendRange(w http.ResponseWriter, r *http.Request) {
 
 func (h *StatsHandler) PriorityBreakdown(w http.ResponseWriter, r *http.Request) {
 	from, to := parseDateRange(r)
+	staffID, _ := resolveStaffScope(r)
 
-	counts, err := h.statsRepo.GetPriorityBreakdown(r.Context(), from, to)
+	counts, err := h.statsRepo.GetPriorityBreakdown(r.Context(), from, to, staffID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal menghitung distribusi prioritas")
 		return
@@ -171,8 +174,9 @@ func (h *StatsHandler) PriorityBreakdown(w http.ResponseWriter, r *http.Request)
 
 func (h *StatsHandler) CategoryBreakdown(w http.ResponseWriter, r *http.Request) {
 	from, to := parseDateRange(r)
+	staffID, _ := resolveStaffScope(r)
 
-	list, err := h.statsRepo.GetCategoryBreakdown(r.Context(), from, to)
+	list, err := h.statsRepo.GetCategoryBreakdown(r.Context(), from, to, staffID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal menghitung distribusi kategori")
 		return
@@ -185,8 +189,9 @@ func (h *StatsHandler) CategoryBreakdown(w http.ResponseWriter, r *http.Request)
 // rentang tanggal yang sama dengan laporan.
 func (h *StatsHandler) StaffPerformanceRange(w http.ResponseWriter, r *http.Request) {
 	from, to := parseDateRange(r)
+	staffID, _ := resolveStaffScope(r)
 
-	list, err := h.statsRepo.GetStaffPerformanceRange(r.Context(), from, to)
+	list, err := h.statsRepo.GetStaffPerformanceRange(r.Context(), from, to, staffID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal menghitung performa staf")
 		return

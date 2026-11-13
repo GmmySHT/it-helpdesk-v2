@@ -8,6 +8,7 @@ import { useNotificationsContext } from "@/lib/notifications-context";
 import { Sidebar } from "@/components/sidebar";
 import PageHeader from "@/components/page-header";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { SignoffPanel } from "@/components/signoff-panel";
 import {
   Ticket,
   User,
@@ -260,10 +261,6 @@ export default function TicketDetailPage() {
       setError("Keterangan resolve wajib diisi");
       return;
     }
-    if (resolveFiles.length === 0) {
-      setError("Wajib upload minimal 1 gambar bukti");
-      return;
-    }
     runAction(() => resolveTicket(token, ticketId, resolveMessage, resolveFiles));
   }
 
@@ -367,8 +364,20 @@ export default function TicketDetailPage() {
       <main className="flex-1 overflow-y-auto slim-scroll">
         <PageHeader
           title={ticket.title}
-          subtitle={`Tiket #${ticket.id.slice(0, 8)} · ${STATUS_LABEL[ticket.status]}`}
+          subtitle={`${ticket.ticket_code ? ticket.ticket_code + " · " : ""}${STATUS_LABEL[ticket.status]}`}
           actions={[
+            // Cetak BAST hanya untuk yang MENERBITKAN dokumen (staf IT/leader/
+            // admin). Pelapor tidak boleh mencetak sendiri — dokumen resmi
+            // yang dia pegang adalah hasil scan bertanda tangan yang di-upload
+            // balik oleh staf, jadi tombolnya tidak ditampilkan untuk role
+            // 'user'. Lihat SignoffPanel di bawah untuk daftar dokumennya.
+            ...(ticket.status === "closed" && user.role !== "user"
+              ? [{
+                  label: "🖨️ Cetak BAST",
+                  href: `/tickets/${ticket.id}/print`,
+                  variant: "primary" as const,
+                }]
+              : []),
             ...(isAdmin ? [{ label: "🗑️ Hapus Tiket", onClick: () => setShowDeleteModal(true), variant: "danger" as const }] : []),
             { label: "← Kembali ke Daftar Tiket", href: "/tickets", variant: "secondary" as const },
           ]}
@@ -624,7 +633,6 @@ export default function TicketDetailPage() {
               />
               <div className="my-3" />
               <input
-                required
                 type="file"
                 accept="image/*"
                 multiple
@@ -632,8 +640,8 @@ export default function TicketDetailPage() {
                 className="mb-4 w-full text-xs text-text-muted file:mr-3 file:rounded-md file:border-0 file:bg-border file:px-3 file:py-2 file:text-xs file:text-text-primary"
               />
               <p className="mb-4 -mt-3 text-[11px] text-text-muted/60">
-                Gambar di atas wajib sebagai bukti resmi. Kamu juga bisa sisipkan
-                gambar tambahan langsung di dalam keterangan lewat tombol 🖼 pada editor.
+                Lampiran opsional. Gambar bukti bisa diunggah di sini atau
+                disisipkan langsung di dalam keterangan lewat tombol 🖼 pada editor.
               </p>
               <button
                 type="submit"
@@ -874,6 +882,19 @@ export default function TicketDetailPage() {
                 </form>
               )}
             </div>
+          )}
+
+          {/* Bukti serah-terima: cetak BAST (lewat tombol di header) lalu
+              unggah scan yang sudah ditandatangani pelapor. */}
+          {token && (
+            <SignoffPanel
+              token={token}
+              ticketId={ticket.id}
+              isClosed={ticket.status === "closed"}
+              reporterName={ticket.created_by_name}
+              canDelete={isAdmin}
+              canUpload={user.role !== "user"}
+            />
           )}
         </div>
         </div>

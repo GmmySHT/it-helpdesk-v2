@@ -42,12 +42,12 @@ type StaffPerformance struct {
 
 // AssetBorrowingStats untuk laporan peminjaman aset per periode.
 type AssetBorrowingStats struct {
-	TotalBorrowings   int64   `json:"total_borrowings"`
-	ActiveBorrowings  int64   `json:"active_borrowings"`  // status borrowed
-	OverdueBorrowings int64   `json:"overdue_borrowings"`
-	ReturnedBorrowings int64  `json:"returned_borrowings"`
-	HandledByStaff    int64   `json:"handled_by_staff"`   // disetujui oleh staff IT
-	AvgReturnDays     float64 `json:"avg_return_days"`    // rata-rata hari return
+	TotalBorrowings    int64   `json:"total_borrowings"`
+	ActiveBorrowings   int64   `json:"active_borrowings"` // status borrowed
+	OverdueBorrowings  int64   `json:"overdue_borrowings"`
+	ReturnedBorrowings int64   `json:"returned_borrowings"`
+	HandledByStaff     int64   `json:"handled_by_staff"` // disetujui oleh staff IT
+	AvgReturnDays      float64 `json:"avg_return_days"`  // rata-rata hari return
 }
 
 // GetAssetBorrowingStats menghitung statistik peminjaman aset dalam rentang waktu.
@@ -128,6 +128,7 @@ func (r *StatsRepository) GetAssetBorrowingStats(ctx context.Context, from, to *
 
 	return &stats, nil
 }
+
 // berdasarkan siapa yang mengklaim (claimed_by), lalu hitung rata-rata
 // waktu kerja dan tingkat kepatuhan SLA masing-masing staf.
 func (r *StatsRepository) GetStaffPerformance(ctx context.Context) ([]StaffPerformance, error) {
@@ -170,7 +171,16 @@ func (r *StatsRepository) GetStaffPerformance(ctx context.Context) ([]StaffPerfo
 // rentang tanggal (berdasarkan created_at tiket) — dipakai modul Laporan
 // supaya tabel performa staf ikut rentang filter yang sama seperti
 // KPI/grafik lain di laporan, bukan selalu "sepanjang masa".
-func (r *StatsRepository) GetStaffPerformanceRange(ctx context.Context, from, to *time.Time) ([]StaffPerformance, error) {
+//
+// staffID kosong = semua staf; kalau diisi, hanya baris orang itu yang
+// dihitung. Penyaringan dilakukan di SQL, bukan di frontend, supaya staf
+// tidak pernah menerima nama rekan setim di dalam respons.
+func (r *StatsRepository) GetStaffPerformanceRange(ctx context.Context, from, to *time.Time, staffID string) ([]StaffPerformance, error) {
+	var staffFilter interface{}
+	if staffID != "" {
+		staffFilter = staffID
+	}
+
 	rows, err := r.db.Query(ctx, `
 		SELECT
 			u.id, u.name,
@@ -186,9 +196,10 @@ func (r *StatsRepository) GetStaffPerformanceRange(ctx context.Context, from, to
 		WHERE t.status IN ('resolved', 'closed') AND t.claimed_at IS NOT NULL AND t.last_resolved_at IS NOT NULL
 			AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR t.claimed_by = $3::uuid)
 		GROUP BY u.id, u.name
 		ORDER BY tickets_resolved DESC
-	`, from, to)
+	`, from, to, staffFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +290,7 @@ func (r *StatsRepository) CreatorTicketCounts(ctx context.Context, userID string
 type TrendPoint struct {
 	Date     string `json:"date"`
 	Created  int    `json:"created"`
-	Resolved int     `json:"resolved"`
+	Resolved int    `json:"resolved"`
 }
 
 // GetTrend mengambil N hari terakhir, DIISI PENUH walau tidak ada data
@@ -437,20 +448,29 @@ func (r *StatsRepository) GetSummary(ctx context.Context) (*StatsSummary, error)
 // StatsSummary (dashboard) karena bisa difilter rentang tanggal dan
 // istilahnya dibuat lebih "laporan formal" (Open/In Progress/dst).
 type KPIReport struct {
-	TotalTickets          int     `json:"total_tickets"`
-	Open                  int     `json:"open"`       // pending_approval + unassigned + assigned (belum diklaim)
-	InProgress            int     `json:"in_progress"` // claimed
-	Resolved              int     `json:"resolved"`    // resolved + closed
-	Overdue               int     `json:"overdue"`     // masih berjalan tapi sudah lewat deadline
-	Critical              int     `json:"critical"`    // prioritas urgent yang masih berjalan
-	AvgResponseMinutes    float64 `json:"avg_response_minutes"`   // created_at -> claimed_at
-	AvgResolutionMinutes  float64 `json:"avg_resolution_minutes"` // claimed_at -> last_resolved_at
+	TotalTickets         int     `json:"total_tickets"`
+	Open                 int     `json:"open"`                   // pending_approval + unassigned + assigned (belum diklaim)
+	InProgress           int     `json:"in_progress"`            // claimed
+	Resolved             int     `json:"resolved"`               // resolved + closed
+	Overdue              int     `json:"overdue"`                // masih berjalan tapi sudah lewat deadline
+	Critical             int     `json:"critical"`               // prioritas urgent yang masih berjalan
+	AvgResponseMinutes   float64 `json:"avg_response_minutes"`   // created_at -> claimed_at
+	AvgResolutionMinutes float64 `json:"avg_resolution_minutes"` // claimed_at -> last_resolved_at
 }
 
 // GetKPIReport menghitung seluruh angka laporan sekaligus, opsional
 // dibatasi rentang tanggal (from/to nil berarti tidak dibatasi ke arah itu).
 // Semua filter tanggal mengacu ke created_at tiket.
-func (r *StatsRepository) GetKPIReport(ctx context.Context, from, to *time.Time) (*KPIReport, error) {
+//
+// staffID kosong = seluruh tim (dipakai leader/admin), terisi = hanya tiket
+// yang dipegang orang itu. Tiket antrean yang belum diklaim siapa pun tidak
+// masuk laporan pribadi karena bukan pekerjaannya.
+func (r *StatsRepository) GetKPIReport(ctx context.Context, from, to *time.Time, staffID string) (*KPIReport, error) {
+	var staffFilter interface{}
+	if staffID != "" {
+		staffFilter = staffID
+	}
+
 	report := &KPIReport{}
 	err := r.db.QueryRow(ctx, `
 		SELECT
@@ -465,7 +485,8 @@ func (r *StatsRepository) GetKPIReport(ctx context.Context, from, to *time.Time)
 		FROM tickets
 		WHERE created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
-	`, from, to).Scan(
+			AND ($3::uuid IS NULL OR claimed_by = $3::uuid)
+	`, from, to, staffFilter).Scan(
 		&report.TotalTickets, &report.Open, &report.InProgress, &report.Resolved,
 		&report.Overdue, &report.Critical, &report.AvgResponseMinutes, &report.AvgResolutionMinutes,
 	)
@@ -478,7 +499,12 @@ func (r *StatsRepository) GetKPIReport(ctx context.Context, from, to *time.Time)
 // GetTrendRange sama seperti GetTrend tapi rentangnya eksplisit (from-to),
 // dipakai modul Laporan supaya grafik trennya ikut rentang filter yang
 // dipilih user, bukan selalu "N hari terakhir dari sekarang".
-func (r *StatsRepository) GetTrendRange(ctx context.Context, from, to time.Time) ([]TrendPoint, error) {
+func (r *StatsRepository) GetTrendRange(ctx context.Context, from, to time.Time, staffID string) ([]TrendPoint, error) {
+	var staffFilter interface{}
+	if staffID != "" {
+		staffFilter = staffID
+	}
+
 	rows, err := r.db.Query(ctx, `
 		WITH date_series AS (
 			SELECT generate_series($1::date, $2::date, '1 day'::interval)::date AS day
@@ -489,10 +515,12 @@ func (r *StatsRepository) GetTrendRange(ctx context.Context, from, to time.Time)
 			COUNT(DISTINCT t2.id) AS resolved_count
 		FROM date_series ds
 		LEFT JOIN tickets t1 ON t1.created_at::date = ds.day
+			AND ($3::uuid IS NULL OR t1.claimed_by = $3::uuid)
 		LEFT JOIN tickets t2 ON t2.last_resolved_at::date = ds.day
+			AND ($3::uuid IS NULL OR t2.claimed_by = $3::uuid)
 		GROUP BY ds.day
 		ORDER BY ds.day
-	`, from, to)
+	`, from, to, staffFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -513,14 +541,20 @@ func (r *StatsRepository) GetTrendRange(ctx context.Context, from, to time.Time)
 
 // GetPriorityBreakdown menghitung jumlah tiket per prioritas dalam rentang
 // tanggal tertentu — dipakai pie chart "Distribusi Prioritas" di laporan.
-func (r *StatsRepository) GetPriorityBreakdown(ctx context.Context, from, to *time.Time) (map[string]int, error) {
+func (r *StatsRepository) GetPriorityBreakdown(ctx context.Context, from, to *time.Time, staffID string) (map[string]int, error) {
+	var staffFilter interface{}
+	if staffID != "" {
+		staffFilter = staffID
+	}
+
 	rows, err := r.db.Query(ctx, `
 		SELECT priority, COUNT(*)
 		FROM tickets
 		WHERE created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR claimed_by = $3::uuid)
 		GROUP BY priority
-	`, from, to)
+	`, from, to, staffFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -546,16 +580,22 @@ type CategoryCount struct {
 // GetCategoryBreakdown menghitung jumlah tiket per kategori dalam rentang
 // tanggal tertentu — dipakai pie chart "Distribusi Kategori" di laporan,
 // diurutkan dari kategori paling banyak tiketnya.
-func (r *StatsRepository) GetCategoryBreakdown(ctx context.Context, from, to *time.Time) ([]CategoryCount, error) {
+func (r *StatsRepository) GetCategoryBreakdown(ctx context.Context, from, to *time.Time, staffID string) ([]CategoryCount, error) {
+	var staffFilter interface{}
+	if staffID != "" {
+		staffFilter = staffID
+	}
+
 	rows, err := r.db.Query(ctx, `
 		SELECT c.name, COUNT(t.id)
 		FROM tickets t
 		JOIN categories c ON c.id = t.category_id
 		WHERE t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR t.claimed_by = $3::uuid)
 		GROUP BY c.name
 		ORDER BY COUNT(t.id) DESC
-	`, from, to)
+	`, from, to, staffFilter)
 	if err != nil {
 		return nil, err
 	}
