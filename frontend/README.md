@@ -1,36 +1,78 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend — IT Helpdesk & Asset Management
 
-## Getting Started
+Next.js 16 (App Router) + React 19 + Tailwind CSS v4 + lucide-react.
+Konsumen API dari backend Go di `../backend` (`/api/v1`), plus WebSocket `/ws`.
 
-First, run the development server:
+## Menjalankan (development)
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buat `.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
+# opsional — kop dokumen cetak (BAST & Laporan KPI)
+NEXT_PUBLIC_INSTITUTION_NAME=Nama Instansi — Unit IT
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Backend harus hidup di `:8080` dan database sudah dimigrasi (`cd ../backend && ./bin/migrate.exe`).
 
-## Learn More
+## Perintah
 
-To learn more about Next.js, take a look at the following resources:
+| Perintah | Fungsi |
+|---|---|
+| `npm run dev` | Dev server (HMR) |
+| `npm run build` | Build production |
+| `npm start` | Jalankan hasil build |
+| `npx tsc --noEmit` | Type-check tanpa build |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+> Jangan jalankan `npm run build` saat `npm run dev` masih hidup — keduanya memakai folder `.next` yang sama, dev server akan menyajikan bundle basi.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Struktur
 
-## Deploy on Vercel
+```
+src/
+├── app/
+│   ├── login/                 # Halaman login
+│   ├── dashboard/             # Ringkasan per role
+│   ├── tickets/               # Daftar, detail, buat tiket
+│   │   └── [id]/print/        # Dokumen BAST siap cetak
+│   ├── daily-tasks/           # Pencatatan daily task staf
+│   ├── asset/                 # Inventaris, peminjaman, disposal
+│   ├── reports/               # Laporan & KPI
+│   │   └── kpi/               # Dashboard KPI + /print (dokumen)
+│   ├── monitoring/            # Dashboard SIMRS
+│   ├── pharmacy/              # Modul farmasi
+│   └── admin/                 # Manajemen user & akses
+├── components/                # Sidebar, PageHeader, SignoffPanel, dsb.
+└── lib/                       # api.ts (client), auth context
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Halaman khusus cetak
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| URL | Isi |
+|---|---|
+| `/tickets/{id}/print` | BAST — hanya tiket `closed`; role `user` tidak melihat tombol cetak |
+| `/reports/kpi/print?from=&to=&staff_id=` | Laporan Kinerja staf: kop, ringkasan, rincian tiket + daily task, blok tanda tangan |
+
+Keduanya memakai `window.print()` dan aturan `@media print` di `src/app/globals.css` (sidebar & toolbar disembunyikan, latar putih).
+
+## Catatan UI
+
+- Dialog konfirmasi memakai komponen sendiri — **jangan** pakai `confirm()` bawaan browser.
+- Tema gelap/terang + animated background (`aurora`/`particle`) diatur di `src/app/layout.tsx` dan `globals.css`.
+- Layout memakai `h-screen overflow-hidden` pada shell; hanya `<main>` yang menggulir, dengan kelas `.slim-scroll`.
+- Ikon dari `lucide-react`; emoji hanya sebagai fallback ikon sidebar.
+
+## Dokumen terkait
+
+- [`../README.md`](../README.md) — gambaran proyek & endpoint API
+- [`../MANUAL_BOOK.md`](../MANUAL_BOOK.md) — panduan penggunaan per role
+- [`../backend/DEPLOY.md`](../backend/DEPLOY.md) — deploy production
+
+---
+
+*Didesain dan dibangun oleh Firaz Faruq — firaz.faruq@gmail.com*

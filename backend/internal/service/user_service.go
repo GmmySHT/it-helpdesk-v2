@@ -270,10 +270,81 @@ func (s *UserService) Login(ctx context.Context, identifier, password string) (s
 		return "", nil, ErrAccountDeactivated
 	}
 
-	token, err := s.auth.GenerateToken(user.ID, user.Role)
+	token, err := s.auth.GenerateToken(user.ID, user.Role, user.PasswordChangedAt)
 	if err != nil {
 		return "", nil, err
 	}
 
 	return token, user, nil
+}
+
+var ErrInvalidCurrentPassword = errors.New("password saat ini salah")
+var ErrPasswordTooShort = errors.New("password baru minimal 8 karakter")
+var ErrPasswordSameAsOld = errors.New("password baru tidak boleh sama dengan password lama")
+
+// MinPasswordLength sengaja disamakan di backend dan frontend supaya pesan
+// validasinya konsisten. Tidak ada aturan rumit (simbol/angka) karena
+// tujuannya mencegah salah ketik, bukan memaksa password sulit diingat.
+const MinPasswordLength = 8
+
+// ChangePassword dipakai PEMILIK akun mengganti passwordnya sendiri.
+// Password lama WAJIB benar: sesi yang dibajak (mis. laptop tidak dikunci)
+// tidak boleh bisa langsung mengganti password tanpa tahu yang lama.
+func (s *UserService) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	if len(newPassword) < MinPasswordLength {
+		return ErrPasswordTooShort
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.DeletedAt != nil || !user.IsActive {
+		return repository.ErrUserNotFound
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+		return ErrInvalidCurrentPassword
+	}
+	if currentPassword == newPassword {
+		return ErrPasswordSameAsOld
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.userRepo.SetPassword(ctx, userID, string(hash))
+}
+
+// ResetPasswordByAdmin dipakai leader/admin mengganti password akun LAIN
+// tanpa perlu tahu password lama (kasus lupa password). Aturan hierarki
+// memakai canManageTarget yang sama dengan edit/nonaktifkan/hapus: leader
+// hanya boleh mereset akun user/staff_it, akun leader/admin hanya oleh admin.
+func (s *UserService) ResetPasswordByAdmin(ctx context.Context, targetID, newPassword, requesterID string, requesterRole model.UserRole) error {
+	if len(newPassword) < MinPasswordLength {
+		return ErrPasswordTooShort
+	}
+	// Reset password AKUN SENDIRI lewat jalur ini ditolak — pakai
+	// ChangePassword supaya password lama tetap diverifikasi.
+	if targetID == requesterID {
+		return ErrCannotManageSelf
+	}
+
+	target, err := s.userRepo.FindByID(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	if target.DeletedAt != nil {
+		return repository.ErrUserNotFound
+	}
+	if !canManageTarget(requesterRole, target.Role) {
+		return ErrInsufficientRoleToManage
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.userRepo.ResetPassword(ctx, targetID, string(hash))
 }

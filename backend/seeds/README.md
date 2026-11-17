@@ -12,7 +12,7 @@ Folder ini berisi file SQL seed untuk data sample transaksi (bukan master data).
 ### 1. Pastikan migrasi sudah berjalan
 ```bash
 cd backend
-./bin/migrate.exe up
+./bin/migrate.exe
 ```
 
 ### 2. Dapatkan UUID user yang valid

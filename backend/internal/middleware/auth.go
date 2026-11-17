@@ -37,7 +37,7 @@ func Auth(authService *service.AuthService, checker *SessionChecker) func(http.H
 				return
 			}
 
-			role, status := checker.Check(r.Context(), claims.UserID)
+			role, status := checker.Check(r.Context(), claims.UserID, claims.PwdAt)
 			switch status {
 			case SessionInvalid:
 				respondUnauthorized(w, "akun tidak aktif atau tidak ditemukan")

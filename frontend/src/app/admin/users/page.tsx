@@ -11,8 +11,10 @@ import {
   updateUserByAdmin,
   setUserActive,
   deleteUserByAdmin,
+  resetUserPasswordByAdmin,
   User,
 } from "@/lib/api";
+import { Pencil, Trash2, KeyRound, Eye, EyeOff, Loader2 } from "lucide-react";
 
 type Role = "user" | "staff_it" | "leader" | "admin";
 
@@ -81,6 +83,17 @@ export default function UserManagementPage() {
   // confirmTarget menampilkan panel konfirmasi inline hanya untuk DELETE.
   const [confirmTarget, setConfirmTarget] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // resetTarget menampilkan panel Reset Password untuk satu user. Password
+  // baru diketik admin/leader (diberitahukan ke pemilik akun lewat jalur
+  // internal), lalu pemilik akun WAJIB menggantinya sendiri setelah login —
+  // backend menandai must_change_password = true untuk itu.
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirm, setResetConfirm] = useState("");
+  const [resetVisible, setResetVisible] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   
   // togglingUserId mencatat user mana yang sedang toggle statusnya
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
@@ -206,6 +219,48 @@ export default function UserManagementPage() {
       setConfirmTarget(null);
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  function openResetPassword(u: User) {
+    setResetTarget(u);
+    setResetPassword("");
+    setResetConfirm("");
+    setResetVisible(false);
+    setResetDone(false);
+    setError("");
+  }
+
+  function closeResetPassword() {
+    setResetTarget(null);
+    setResetPassword("");
+    setResetConfirm("");
+    setResetDone(false);
+  }
+
+  async function handleResetPassword(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !resetTarget) return;
+    if (resetPassword.length < 8) {
+      setError("Password baru minimal 8 karakter");
+      return;
+    }
+    if (resetPassword !== resetConfirm) {
+      setError("Kedua password baru belum sama");
+      return;
+    }
+    setIsResetting(true);
+    setError("");
+    try {
+      await resetUserPasswordByAdmin(token, resetTarget.id, resetPassword);
+      setResetDone(true);
+      loadUsers();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal mereset password user"
+      );
+    } finally {
+      setIsResetting(false);
     }
   }
 
@@ -377,6 +432,122 @@ export default function UserManagementPage() {
             </div>
           )}
 
+          {resetTarget && (
+            <div className="mb-6 rounded-lg border border-amber/40 bg-amber/5 p-5">
+              <div className="mb-3 flex items-start justify-between gap-4">
+                <div className="flex items-start gap-2.5">
+                  <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-amber" />
+                  <div>
+                    <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-text-primary">
+                      Reset Password — {resetTarget.name}
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                      Password lama tidak diperlukan. Setelah direset, semua
+                      sesi aktif akun ini langsung berakhir dan pemiliknya
+                      wajib mengganti password saat login berikutnya.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeResetPassword}
+                  className="shrink-0 text-xs text-text-muted hover:text-text-primary"
+                >
+                  Tutup
+                </button>
+              </div>
+
+              {resetDone ? (
+                <div className="rounded-md border border-green/40 bg-green/10 px-4 py-3">
+                  <p className="text-sm font-medium text-green">
+                    Password {resetTarget.name} berhasil direset
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                    Beritahukan password baru ke pemilik akun lewat jalur aman
+                    (bukan grup/chat umum). Mereka akan diminta menggantinya
+                    sendiri setelah login.
+                  </p>
+                </div>
+              ) : (
+                <form onSubmit={handleResetPassword} className="space-y-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className={labelClass}>Password Baru</label>
+                      <div className="relative">
+                        <input
+                          type={resetVisible ? "text" : "password"}
+                          value={resetPassword}
+                          onChange={(e) => setResetPassword(e.target.value)}
+                          minLength={8}
+                          placeholder="Minimal 8 karakter"
+                          className={`${inputClass} pr-11`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setResetVisible((v) => !v)}
+                          aria-label={
+                            resetVisible ? "Sembunyikan password" : "Tampilkan password"
+                          }
+                          className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-card hover:text-text-primary"
+                        >
+                          {resetVisible ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Ulangi Password Baru</label>
+                      <input
+                        type={resetVisible ? "text" : "password"}
+                        value={resetConfirm}
+                        onChange={(e) => setResetConfirm(e.target.value)}
+                        minLength={8}
+                        placeholder="Ketik ulang password baru"
+                        className={inputClass}
+                      />
+                      {resetConfirm.length > 0 &&
+                        resetConfirm !== resetPassword && (
+                          <p className="mt-1 text-[11px] text-red">
+                            Kedua password belum sama.
+                          </p>
+                        )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="submit"
+                      disabled={
+                        isResetting ||
+                        resetPassword.length < 8 ||
+                        resetPassword !== resetConfirm
+                      }
+                      className="inline-flex items-center gap-2 rounded-md bg-amber px-4 py-2 text-sm font-semibold text-card transition-all duration-150 hover:bg-amber/90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {isResetting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <KeyRound className="h-4 w-4" />
+                      )}
+                      {isResetting ? "Menyimpan..." : "Reset Password"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeResetPassword}
+                      disabled={isResetting}
+                      className="rounded-md border border-border px-4 py-2 text-sm text-text-secondary hover:bg-card-hover disabled:opacity-40"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             {users.length === 0 ? (
               <p className="p-8 text-center text-sm text-text-muted">Belum ada user.</p>
@@ -400,7 +571,21 @@ export default function UserManagementPage() {
                       const manageable = canManage(myRole, u.role);
                       return (
                         <tr key={u.id} className="border-b border-border-subtle">
-                          <td className="px-5 py-3 text-text-primary">{u.name}</td>
+                          <td className="px-5 py-3 text-text-primary">
+                            <span className="flex flex-wrap items-center gap-2">
+                              {u.name}
+                              {/* Penanda dari backend: password direset orang
+                                  lain dan belum diganti pemiliknya. */}
+                              {u.must_change_password && (
+                                <span
+                                  title="Password sudah direset, pemilik akun belum menggantinya"
+                                  className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 text-[10px] font-medium text-amber"
+                                >
+                                  Wajib ganti
+                                </span>
+                              )}
+                            </span>
+                          </td>
                           <td className="px-5 py-3 text-text-secondary">{u.email}</td>
                           <td className="px-5 py-3 text-text-secondary">{u.username || "-"}</td>
                           <td className="px-5 py-3">
@@ -443,10 +628,19 @@ export default function UserManagementPage() {
                                 title="Edit user"
                                 className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-border/50 text-blue transition-all duration-150 hover:bg-card-hover hover:text-blue/80 disabled:cursor-not-allowed disabled:opacity-30"
                               >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                </svg>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => openResetPassword(u)}
+                                disabled={isSelf || !manageable}
+                                title={
+                                  isSelf
+                                    ? "Ganti password akun sendiri lewat halaman Profil"
+                                    : "Reset password user"
+                                }
+                                className="flex h-8 w-8 items-center justify-center rounded-md border border-amber/40 bg-amber/10 text-amber transition-all duration-150 hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-30"
+                              >
+                                <KeyRound className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 onClick={() => setConfirmTarget(u)}
@@ -454,10 +648,7 @@ export default function UserManagementPage() {
                                 title={isSelf ? "Tidak bisa menghapus akun sendiri" : "Hapus user"}
                                 className="flex h-8 w-8 items-center justify-center rounded-md border border-red-900/40 bg-red-950/20 text-red-400 transition-all duration-150 hover:bg-red-950/40 hover:text-red disabled:cursor-not-allowed disabled:opacity-30"
                               >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <polyline points="3 6 5 6 21 6"/>
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           </td>

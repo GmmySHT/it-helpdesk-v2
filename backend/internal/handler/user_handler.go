@@ -16,10 +16,13 @@ import (
 type UserHandler struct {
 	userRepo    *repository.UserRepository
 	userService *service.UserService
+	// checker dipakai untuk membuang cache sesi setelah password berubah,
+	// supaya token lama langsung ditolak tanpa menunggu TTL cache.
+	checker *appmiddleware.SessionChecker
 }
 
-func NewUserHandler(userRepo *repository.UserRepository, userService *service.UserService) *UserHandler {
-	return &UserHandler{userRepo: userRepo, userService: userService}
+func NewUserHandler(userRepo *repository.UserRepository, userService *service.UserService, checker *appmiddleware.SessionChecker) *UserHandler {
+	return &UserHandler{userRepo: userRepo, userService: userService, checker: checker}
 }
 
 // ListStaff mengembalikan semua user dengan role 'staff_it'.
@@ -227,5 +230,90 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// ChangePassword dipakai SETIAP user (semua role) mengganti password akunnya
+// sendiri dari halaman Profil. Password lama wajib benar.
+func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		respondError(w, http.StatusBadRequest, "password saat ini dan password baru wajib diisi")
+		return
+	}
+
+	if err := h.userService.ChangePassword(r.Context(), userID, req.CurrentPassword, req.NewPassword); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidCurrentPassword):
+			// 400, bukan 401: sesi masih sah, cuma isian form yang salah.
+			// 401 akan memicu frontend logout otomatis.
+			respondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrPasswordTooShort), errors.Is(err, service.ErrPasswordSameAsOld):
+			respondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, repository.ErrUserNotFound):
+			respondError(w, http.StatusNotFound, "user tidak ditemukan")
+		default:
+			respondInternal(w, err, "gagal mengubah password")
+		}
+		return
+	}
+
+	// Token yang beredar sebelumnya sudah tidak sah (pwd_at < password_changed_at),
+	// jadi cache sesi dibersihkan agar aturan itu langsung berlaku.
+	h.checker.Forget(userID)
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type resetPasswordRequest struct {
+	NewPassword string `json:"new_password"`
+}
+
+// ResetPassword dipakai leader/admin mereset password akun LAIN (kasus lupa
+// password). Tidak perlu password lama, tapi tetap dibatasi hierarki role
+// lewat service.ResetPasswordByAdmin.
+func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	targetID := chi.URLParam(r, "id")
+	requesterID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	requesterRole, _ := r.Context().Value(appmiddleware.ContextRole).(model.UserRole)
+
+	var req resetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
+		return
+	}
+	if req.NewPassword == "" {
+		respondError(w, http.StatusBadRequest, "password baru wajib diisi")
+		return
+	}
+
+	if err := h.userService.ResetPasswordByAdmin(r.Context(), targetID, req.NewPassword, requesterID, requesterRole); err != nil {
+		switch {
+		case errors.Is(err, repository.ErrUserNotFound):
+			respondError(w, http.StatusNotFound, "user tidak ditemukan")
+		case errors.Is(err, service.ErrInsufficientRoleToManage):
+			respondError(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrCannotManageSelf):
+			respondError(w, http.StatusBadRequest, "ganti password akun sendiri lewat halaman Profil")
+		case errors.Is(err, service.ErrPasswordTooShort):
+			respondError(w, http.StatusBadRequest, err.Error())
+		default:
+			respondInternal(w, err, "gagal mereset password")
+		}
+		return
+	}
+
+	// Sesi lama pemilik akun langsung diputus.
+	h.checker.Forget(targetID)
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

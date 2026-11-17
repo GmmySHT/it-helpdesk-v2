@@ -102,7 +102,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 	categoryRepo := repository.NewCategoryRepository(db)
 	categoryHandler := handler.NewCategoryHandler(categoryRepo)
 
-	userHandler := handler.NewUserHandler(userRepo, userService)
+	userHandler := handler.NewUserHandler(userRepo, userService, sessionChecker)
 
 	statsRepo := repository.NewStatsRepository(db)
 	statsHandler := handler.NewStatsHandler(statsRepo)
@@ -171,6 +171,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 		r.Group(func(r chi.Router) {
 			r.Use(appmiddleware.Auth(authService, sessionChecker))
 
+			// Ganti password SENDIRI — terbuka untuk semua role yang login.
+			// Password lama wajib benar (lihat UserHandler.ChangePassword).
+			r.Put("/auth/change-password", userHandler.ChangePassword)
+
 			r.Post("/tickets", ticketHandler.Create)
 			r.Get("/tickets", ticketHandler.List)
 			r.Get("/tickets/{id}", ticketHandler.GetByID)
@@ -201,6 +205,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 					r.Post("/admin/users", userHandler.Create)
 					r.Put("/admin/users/{id}", userHandler.Update)
 					r.Patch("/admin/users/{id}/status", userHandler.SetActive)
+					// Reset password akun LAIN (kasus lupa password). Hierarki
+					// role divalidasi di service: leader hanya boleh akun
+					// user/staff_it, akun leader/admin hanya oleh admin.
+					r.Put("/admin/users/{id}/password", userHandler.ResetPassword)
 					r.Delete("/admin/users/{id}", userHandler.Delete)
 				})
 

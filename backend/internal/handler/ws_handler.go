@@ -75,7 +75,7 @@ func (h *WSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Akun yang sudah dinonaktifkan/dihapus tidak boleh membuka koneksi baru.
-	if _, status := h.checker.Check(r.Context(), claims.UserID); status != appmiddleware.SessionOK {
+	if _, status := h.checker.Check(r.Context(), claims.UserID, claims.PwdAt); status != appmiddleware.SessionOK {
 		respondError(w, http.StatusUnauthorized, "akun tidak aktif")
 		return
 	}

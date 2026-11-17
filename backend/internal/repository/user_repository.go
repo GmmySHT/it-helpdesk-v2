@@ -72,13 +72,13 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*model.
 // salah satu dari keduanya tanpa perlu form terpisah.
 func (r *UserRepository) FindByIdentifier(ctx context.Context, identifier string) (*model.User, error) {
 	query := `
-		SELECT id, name, email, username, password_hash, role, department, is_active, created_at
+		SELECT id, name, email, username, password_hash, role, department, is_active, password_changed_at, must_change_password, created_at
 		FROM users
 		WHERE (email = $1 OR username = $1) AND deleted_at IS NULL
 	`
 	var u model.User
 	err := r.db.QueryRow(ctx, query, identifier).Scan(
-		&u.ID, &u.Name, &u.Email, &u.Username, &u.PasswordHash, &u.Role, &u.Department, &u.IsActive, &u.CreatedAt,
+		&u.ID, &u.Name, &u.Email, &u.Username, &u.PasswordHash, &u.Role, &u.Department, &u.IsActive, &u.PasswordChangedAt, &u.MustChangePassword, &u.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -96,7 +96,7 @@ func (r *UserRepository) ListAll(ctx context.Context) ([]model.User, error) {
 	// deleted_at IS NULL: user yang sudah "dihapus" (soft delete) tidak lagi
 	// muncul di daftar Manajemen User sama sekali.
 	query := `
-		SELECT id, name, email, username, role, department, is_active, created_at
+		SELECT id, name, email, username, role, department, is_active, must_change_password, created_at
 		FROM users
 		WHERE deleted_at IS NULL
 		ORDER BY name
@@ -110,7 +110,7 @@ func (r *UserRepository) ListAll(ctx context.Context) ([]model.User, error) {
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Username, &u.Role, &u.Department, &u.IsActive, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Username, &u.Role, &u.Department, &u.IsActive, &u.MustChangePassword, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -124,13 +124,13 @@ func (r *UserRepository) ListAll(ctx context.Context) ([]model.User, error) {
 // yang justru butuh tahu status user SEBELUM diubah).
 func (r *UserRepository) FindByID(ctx context.Context, id string) (*model.User, error) {
 	query := `
-		SELECT id, name, email, username, password_hash, role, department, is_active, deleted_at, created_at
+		SELECT id, name, email, username, password_hash, role, department, is_active, password_changed_at, must_change_password, deleted_at, created_at
 		FROM users
 		WHERE id = $1
 	`
 	var u model.User
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&u.ID, &u.Name, &u.Email, &u.Username, &u.PasswordHash, &u.Role, &u.Department, &u.IsActive, &u.DeletedAt, &u.CreatedAt,
+		&u.ID, &u.Name, &u.Email, &u.Username, &u.PasswordHash, &u.Role, &u.Department, &u.IsActive, &u.PasswordChangedAt, &u.MustChangePassword, &u.DeletedAt, &u.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -277,6 +277,45 @@ func (r *UserRepository) Update(ctx context.Context, id string, f UpdateFields) 
 		return nil, err
 	}
 	return &u, nil
+}
+
+// SetPassword menyimpan hash password baru untuk PEMILIK akun sendiri.
+// password_changed_at diperbarui supaya seluruh token lama (diterbitkan
+// sebelum perubahan) langsung ditolak middleware. must_change_password
+// dimatikan karena password sekarang diisi sendiri oleh pemiliknya.
+func (r *UserRepository) SetPassword(ctx context.Context, id, passwordHash string) error {
+	query := `
+		UPDATE users
+		SET password_hash = $1, password_changed_at = now(), must_change_password = false
+		WHERE id = $2 AND deleted_at IS NULL
+	`
+	tag, err := r.db.Exec(ctx, query, passwordHash, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// ResetPassword dipakai leader/admin mengganti password akun ORANG LAIN.
+// must_change_password diset true: pemilik akun harus menggantinya sendiri
+// setelah login, karena password sementara dipegang orang lain.
+func (r *UserRepository) ResetPassword(ctx context.Context, id, passwordHash string) error {
+	query := `
+		UPDATE users
+		SET password_hash = $1, password_changed_at = now(), must_change_password = true
+		WHERE id = $2 AND deleted_at IS NULL
+	`
+	tag, err := r.db.Exec(ctx, query, passwordHash, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 // SetActive mengaktifkan/menonaktifkan user (tanpa menghapus datanya).

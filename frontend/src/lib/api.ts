@@ -8,6 +8,8 @@ export type User = {
   role: "user" | "staff_it" | "leader" | "admin";
   department?: string;
   is_active: boolean;
+  // true kalau password direset leader/admin dan belum diganti sendiri
+  must_change_password?: boolean;
   created_at: string;
 };
 
@@ -235,6 +237,41 @@ export function deleteUserByAdmin(token: string, id: string) {
   return request<{ ok: boolean }>(
     `/admin/users/${id}`,
     { method: "DELETE" },
+    token
+  );
+}
+
+// changeMyPassword dipakai SETIAP user mengganti password akunnya sendiri.
+// Password lama wajib benar; setelah sukses semua token lama tidak berlaku
+// lagi sehingga frontend harus mengarahkan user login ulang.
+export function changeMyPassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string
+) {
+  return request<{ ok: boolean }>(
+    "/auth/change-password",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    },
+    token
+  );
+}
+
+// resetUserPasswordByAdmin dipakai leader/admin memberi password baru ke
+// akun LAIN tanpa perlu tahu password lamanya (kasus lupa password).
+export function resetUserPasswordByAdmin(
+  token: string,
+  id: string,
+  newPassword: string
+) {
+  return request<{ ok: boolean }>(
+    `/admin/users/${id}/password`,
+    { method: "PUT", body: JSON.stringify({ new_password: newPassword }) },
     token
   );
 }

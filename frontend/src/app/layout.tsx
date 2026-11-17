@@ -46,7 +46,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id" className={`${inter.variable} ${plexMono.variable}`} suppressHydrationWarning>
-      <body>
+      {/* suppressHydrationWarning juga di <body>: ekstensi browser (penerjemah,
+          konverter mata uang, password manager) menyuntikkan atribut ke <body>
+          sebelum React sempat hydrate — mis. data-smart-converter-loaded="true".
+          Itu bukan HTML kita, tapi React tetap melaporkannya sebagai
+          hydration mismatch. Atribut ini menahan peringatan untuk elemen ini
+          saja; isi halaman di dalamnya tetap divalidasi normal. */}
+      <body suppressHydrationWarning>
         <ThemeProvider>
           <AuthProvider>
             <NotificationsProvider>

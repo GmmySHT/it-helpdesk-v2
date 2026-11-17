@@ -25,10 +25,23 @@ Salin ke server, mis. `C:\apps\ticketing\`:
 ```
 C:\apps\ticketing\
   ticketing-api.exe
-  .env              <- dari .env.production.example, isi nilai asli
-  uploads\          <- dibuat otomatis
+  migrate.exe
+  migrations\        <- WAJIB ikut disalin (35 pasang file .up.sql/.down.sql)
+  .env               <- dari .env.production.example, isi nilai asli
+  uploads\           <- dibuat otomatis
 ```
-Jalankan migrasi database seperti biasa sebelum start pertama.
+Jalankan migrasi sebelum start pertama — **dari folder yang berisi `migrations\` dan `.env`**:
+```powershell
+cd C:\apps\ticketing
+.\migrate.exe
+```
+`migrate.exe` membaca `DATABASE_URL` dari `.env` di direktori kerja dan folder `migrations\` relatif ke situ (tanpa flag). Kalau dijalankan dari folder lain, keluar error `scan migrations: open migrations: The system cannot find the file specified.`
+
+Ia menerapkan semua migrasi yang belum jalan dan mencatatnya di tabel `schema_migrations`. Aman dijalankan ulang:
+```
+Found 34 migration files, 34 already applied
+All migrations already applied — nothing to do
+```
 
 Uji manual dulu: `.\ticketing-api.exe`. Dengan `APP_ENV=production`, aplikasi **menolak start** bila `JWT_SECRET` masih default/pendek atau CORS masih ke `localhost` — itu disengaja.
 
@@ -41,7 +54,7 @@ nssm start TicketingAPI
 ```
 
 ## 3. Frontend
-Buat `.env.production` di folder frontend (lihat `.env.production.example`), lalu:
+Buat `.env.production` di folder frontend (contoh: `env.production.example` — tanpa titik di depan), lalu:
 ```powershell
 cd C:\laragon\www\ticketing-it\frontend
 npm ci
@@ -90,9 +103,16 @@ Uji manual di aplikasi:
 - [ ] Unggah file `.html`/`.exe` (walau diganti nama `.jpg`) sebagai gambar → ditolak.
 - [ ] Nonaktifkan sebuah akun lewat Manajemen User → sesi aktifnya terputus maksimal ±15 detik.
 - [ ] Matikan koneksi SIMRS → halaman Monitoring menampilkan banner, halaman lain normal.
+- [ ] Login sebagai `staff_it`, buka `/reports/kpi` → tidak ada dropdown staf, angka hanya miliknya. Coba `?staff_id=<id staf lain>` di URL → tetap data sendiri.
+- [ ] Login sebagai `leader`/`admin` → dropdown staf muncul, pilih staf lain → kartu ringkasan & tabel ikut berubah.
+- [ ] Buka `/reports/kpi/print?staff_id=<staf>` sebagai `staff_it` → kop tetap nama sendiri.
+- [ ] Tiket `closed` → tombol **Cetak BAST** muncul untuk staff/leader/admin, **tidak** muncul untuk `user`.
+- [ ] Login sebagai user mana pun → menu profil di sidebar → `/profile` → ganti password dengan password lama benar → berhasil, auto logout, login ulang dengan password baru berhasil.
+- [ ] Ganti password dengan password lama **salah** → muncul pesan "password saat ini salah", bukan logout paksa.
+- [ ] Login `leader` → `/admin/users` → reset password akun `user` → berhasil. Coba reset akun `admin` → ditolak ("tidak punya hak untuk mengelola akun dengan role ini").
+- [ ] Setelah akun direset, login dengan password baru → halaman Profil menampilkan banner "baru direset oleh leader/admin".
 
 ## 8. Yang belum tercakup (tahap berikutnya)
-- Halaman **ganti password** dan reset password oleh user sendiri.
 - Token login masih di `localStorage` (rentan jika ada celah XSS); cookie `HttpOnly` lebih aman.
 - Autentikasi dua langkah (2FA) untuk akun leader/admin.
 - Audit log (siapa mengubah apa), pemindaian antivirus untuk unggahan, dan pemantauan/alert (uptime, disk, error).

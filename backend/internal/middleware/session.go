@@ -24,6 +24,10 @@ const (
 // berjam-jam, sehingga user yang sudah dinonaktifkan atau diturunkan rolenya
 // tetap lolos kalau hanya mengandalkan isi token).
 //
+// Pemeriksaan yang sama juga menolak token yang diterbitkan SEBELUM password
+// terakhir diubah (claims pwd_at < users.password_changed_at). Itulah cara
+// reset password oleh admin memutus sesi lama tanpa tabel sesi.
+//
 // Hasilnya di-cache singkat (ttl) supaya tidak ada query ke database di
 // setiap request; perubahan status/role berlaku paling lambat setelah ttl.
 type SessionChecker struct {
@@ -34,25 +38,33 @@ type SessionChecker struct {
 }
 
 type sessionEntry struct {
-	role    model.UserRole
-	ok      bool
-	expires time.Time
+	role       model.UserRole
+	ok         bool
+	pwdChanged int64 // unix detik password_changed_at (0 kalau belum pernah diubah)
+	expires    time.Time
 }
 
 func NewSessionChecker(repo *repository.UserRepository, ttl time.Duration) *SessionChecker {
 	return &SessionChecker{repo: repo, ttl: ttl, cache: make(map[string]sessionEntry)}
 }
 
-func (c *SessionChecker) Check(ctx context.Context, userID string) (model.UserRole, SessionStatus) {
+// Check memvalidasi akun di balik token. pwdAt diambil dari claims token
+// (0 untuk token lama yang diterbitkan sebelum fitur ini ada) — token lama
+// tetap diterima selama password akun memang belum pernah diubah.
+func (c *SessionChecker) Check(ctx context.Context, userID string, pwdAt int64) (model.UserRole, SessionStatus) {
 	now := time.Now()
 
 	c.mu.Lock()
 	if e, ok := c.cache[userID]; ok && now.Before(e.expires) {
 		c.mu.Unlock()
-		if e.ok {
-			return e.role, SessionOK
+		switch {
+		case !e.ok:
+			return "", SessionInvalid
+		case pwdAt < e.pwdChanged:
+			// Password diubah setelah token ini diterbitkan.
+			return "", SessionInvalid
 		}
-		return "", SessionInvalid
+		return e.role, SessionOK
 	}
 	c.mu.Unlock()
 
@@ -65,15 +77,25 @@ func (c *SessionChecker) Check(ctx context.Context, userID string) (model.UserRo
 		return "", SessionError
 	}
 
+	var pwdChanged int64
+	if u.PasswordChangedAt != nil {
+		pwdChanged = u.PasswordChangedAt.Unix()
+	}
+
 	ok := u.IsActive && u.DeletedAt == nil
-	c.store(userID, sessionEntry{role: u.Role, ok: ok, expires: now.Add(c.ttl)})
+	c.store(userID, sessionEntry{role: u.Role, ok: ok, pwdChanged: pwdChanged, expires: now.Add(c.ttl)})
 	if !ok {
+		return "", SessionInvalid
+	}
+	// Token yang terbit sebelum password terakhir diubah sudah tidak sah.
+	if pwdAt < pwdChanged {
 		return "", SessionInvalid
 	}
 	return u.Role, SessionOK
 }
 
-// Forget membuang cache satu user (opsional dipanggil saat admin mengubah akun).
+// Forget membuang cache satu user — dipanggil setelah password diubah atau
+// akun disetel ulang, supaya aturan baru langsung berlaku tanpa menunggu ttl.
 func (c *SessionChecker) Forget(userID string) {
 	c.mu.Lock()
 	delete(c.cache, userID)
