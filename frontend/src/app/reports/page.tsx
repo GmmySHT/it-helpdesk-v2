@@ -17,6 +17,7 @@ import {
   Cell,
 } from "recharts";
 import { useAuth } from "@/lib/auth-context";
+import { isTechnicalStaff } from "@/lib/roles";
 import { Sidebar } from "@/components/sidebar";
 import { Lock } from "lucide-react";
 import {
@@ -194,7 +195,7 @@ export default function ReportsPage() {
   // "Tiket Masuk 2" di atas tabel berisi 4 baris.
   const categoryMap = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const filteredTickets = allTickets.filter((t) => {
-    if (user?.role === "staff_it" && t.claimed_by !== user.id) return false;
+    if (user && isTechnicalStaff(user.role) && t.claimed_by !== user.id) return false;
     if (!fromDate && !toDate) return true;
     const created = new Date(t.created_at);
     if (fromDate && created < new Date(fromDate)) return false;
@@ -652,7 +653,7 @@ export default function ReportsPage() {
               supaya jelas angkanya bukan angka tim. */}
           <div className="mb-6 rounded-lg border border-border bg-card p-6">
             <p className="mb-4 flex items-center gap-1.5 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
-              {user?.role === "staff_it" ? (
+              {isTechnicalStaff(user?.role) ? (
                 <>
                   <Lock className="h-3 w-3" />
                   Performa Saya

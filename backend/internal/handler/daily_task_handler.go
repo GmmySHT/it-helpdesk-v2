@@ -20,11 +20,23 @@ import (
 // (pelapor) hanya boleh MELIHAT — daily task adalah catatan pekerjaan tim,
 // bukan laporan publik, dan namanya memuat keluhan unit lain.
 type DailyTaskHandler struct {
-	repo *repository.DailyTaskRepository
+	repo          *repository.DailyTaskRepository
+	attachmentRepo *repository.DailyTaskAttachmentRepository
 }
 
-func NewDailyTaskHandler(repo *repository.DailyTaskRepository) *DailyTaskHandler {
-	return &DailyTaskHandler{repo: repo}
+func NewDailyTaskHandler(repo *repository.DailyTaskRepository, attachmentRepo *repository.DailyTaskAttachmentRepository) *DailyTaskHandler {
+	return &DailyTaskHandler{repo: repo, attachmentRepo: attachmentRepo}
+}
+
+// fillAttachments mengisi lampiran untuk daftar task. Di sini dipanggil
+// sekali per task — jumlah task per halaman dibatasi filter tanggal UI.
+func (h *DailyTaskHandler) fillAttachments(r *http.Request, tasks []model.DailyTask) error {
+	for i := range tasks {
+		list, err := h.attachmentRepo.ListByTask(r.Context(), tasks[i].ID)
+		if err != nil { return err }
+		tasks[i].Attachments = list
+	}
+	return nil
 }
 
 func (h *DailyTaskHandler) ListUnits(w http.ResponseWriter, r *http.Request) {
@@ -50,13 +62,17 @@ func (h *DailyTaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Staf hanya boleh melihat catatannya sendiri; leader/admin boleh melihat
 	// milik siapa pun. Ini mencegah staf mengintip beban kerja rekan setim,
 	// sama seperti aturan pada statistik tiket.
-	if role == model.RoleStaffIT {
+	if model.IsTechnicalStaff(role) {
 		filter.CreatedBy = userID
 	}
 
 	tasks, err := h.repo.List(r.Context(), filter)
 	if err != nil {
 		respondInternal(w, err, "gagal mengambil daily task")
+		return
+	}
+	if err := h.fillAttachments(r, tasks); err != nil {
+		respondInternal(w, err, "gagal mengambil lampiran daily task")
 		return
 	}
 	respondJSON(w, http.StatusOK, tasks)
@@ -73,7 +89,100 @@ func (h *DailyTaskHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondInternal(w, err, "gagal mengambil daily task")
 		return
 	}
+	attachments, err := h.attachmentRepo.ListByTask(r.Context(), id)
+	if err != nil {
+		respondInternal(w, err, "gagal mengambil lampiran")
+		return
+	}
+	task.Attachments = attachments
 	respondJSON(w, http.StatusOK, task)
+}
+
+// UploadAttachments — POST /daily-tasks/{id}/attachments (multipart/form-data)
+// Field: files (bisa lebih dari satu). Maksimal 5 file per task, 5 MB/file.
+// Hanya pemilik task yang boleh menambah lampiran.
+func (h *DailyTaskHandler) UploadAttachments(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	task, err := h.repo.FindByID(r.Context(), id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "daily task tidak ditemukan")
+		return
+	}
+	if task.CreatedBy != userID {
+		respondError(w, http.StatusForbidden, "hanya pemilik task yang boleh menambah lampiran")
+		return
+	}
+
+	if err := r.ParseMultipartForm(30 << 20); err != nil {
+		respondError(w, http.StatusBadRequest, "gagal membaca form upload")
+		return
+	}
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		respondError(w, http.StatusBadRequest, "pilih minimal satu file")
+		return
+	}
+	current, err := h.attachmentRepo.Count(r.Context(), id)
+	if err != nil { respondInternal(w, err, "gagal menghitung lampiran"); return }
+	if current+len(files) > 5 {
+		respondError(w, http.StatusBadRequest, "maksimal 5 lampiran per daily task")
+		return
+	}
+
+	saved := []model.DailyTaskAttachment{}
+	for _, fh := range files {
+		if fh.Size > 5<<20 {
+			respondError(w, http.StatusBadRequest, "ukuran setiap file maksimal 5 MB")
+			return
+		}
+		f, err := fh.Open()
+		if err != nil { respondInternal(w, err, "gagal membaca file"); return }
+		url, fileType, err := saveValidatedDoc(f)
+		f.Close()
+		if err != nil {
+			if errors.Is(err, ErrInvalidDoc) || errors.Is(err, ErrDocTooLarge) {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			respondInternal(w, err, "gagal menyimpan lampiran")
+			return
+		}
+		a := model.DailyTaskAttachment{
+			TaskID: id, FileURL: url, FileName: fh.Filename,
+			FileType: fileType, FileSize: fh.Size, UploadedBy: userID,
+		}
+		if err := h.attachmentRepo.Create(r.Context(), &a); err != nil {
+			respondInternal(w, err, "gagal menyimpan lampiran")
+			return
+		}
+		saved = append(saved, a)
+	}
+	respondJSON(w, http.StatusCreated, saved)
+}
+
+// DeleteAttachment — DELETE /daily-tasks/{id}/attachments/{attId}
+// Hanya pemilik task yang boleh menghapus.
+func (h *DailyTaskHandler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	attID := chi.URLParam(r, "attId")
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	task, err := h.repo.FindByID(r.Context(), id)
+	if err != nil { respondError(w, http.StatusNotFound, "daily task tidak ditemukan"); return }
+	if task.CreatedBy != userID {
+		respondError(w, http.StatusForbidden, "hanya pemilik task yang boleh menghapus lampiran")
+		return
+	}
+	a, err := h.attachmentRepo.FindByID(r.Context(), attID)
+	if err != nil || a.TaskID != id {
+		respondError(w, http.StatusNotFound, "lampiran tidak ditemukan")
+		return
+	}
+	if err := h.attachmentRepo.Delete(r.Context(), attID); err != nil {
+		respondInternal(w, err, "gagal menghapus lampiran")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // dailyTaskInput adalah bentuk body request. Field waktu dikirim sebagai
@@ -220,7 +329,7 @@ func (h *DailyTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Staf hanya boleh mengubah catatannya sendiri; leader/admin boleh semua.
-	if role == model.RoleStaffIT && existing.CreatedBy != userID {
+	if model.IsTechnicalStaff(role) && existing.CreatedBy != userID {
 		respondError(w, http.StatusForbidden, "kamu hanya bisa mengubah daily task milik sendiri")
 		return
 	}
@@ -266,7 +375,7 @@ func (h *DailyTaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if role == model.RoleStaffIT && existing.CreatedBy != userID {
+	if model.IsTechnicalStaff(role) && existing.CreatedBy != userID {
 		respondError(w, http.StatusForbidden, "kamu hanya bisa menghapus daily task milik sendiri")
 		return
 	}

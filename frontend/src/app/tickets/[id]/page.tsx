@@ -4,6 +4,7 @@ import { useEffect, useState, FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import { canEditTicket, canSignoff, isSupervisor } from "@/lib/roles";
 import { useNotificationsContext } from "@/lib/notifications-context";
 import { Sidebar } from "@/components/sidebar";
 import PageHeader from "@/components/page-header";
@@ -25,6 +26,7 @@ import {
   rejectTicket,
   updateTicketDeadline,
   updateTicketDetails,
+  updateTicketAnalysis,
   listStaff,
   listCategories,
   getRating,
@@ -98,8 +100,13 @@ export default function TicketDetailPage() {
     "low" | "medium" | "high" | "urgent"
   >("medium");
 
-  const isLeaderOrAdmin = user?.role === "leader" || user?.role === "admin";
+  const isLeaderOrAdmin = isSupervisor(user?.role);
   const isAdmin = user?.role === "admin";
+  // Analisa/catatan staf IT + toggle gate persetujuan sebelum klaim.
+  const [analysisNotes, setAnalysisNotes] = useState("");
+  const [analysisRequired, setAnalysisRequired] = useState<boolean | null>(null);
+  const [analysisSaving, setAnalysisSaving] = useState(false);
+  const [analysisMsg, setAnalysisMsg] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -127,6 +134,12 @@ export default function TicketDetailPage() {
     try {
       const data = await getTicket(token, ticketId);
       setTicket(data);
+      setAnalysisNotes(data.analysis_notes || "");
+      setAnalysisRequired(
+        data.analysis_approval_required === null || data.analysis_approval_required === undefined
+          ? null
+          : data.analysis_approval_required
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat tiket");
     }
@@ -231,6 +244,25 @@ export default function TicketDetailPage() {
       setError(err instanceof Error ? err.message : "Gagal mengirim komentar");
     } finally {
       setCommentSubmitting(false);
+    }
+  }
+
+  async function handleSaveAnalysis(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !ticket) return;
+    setAnalysisMsg("");
+    setAnalysisSaving(true);
+    try {
+      const updated = await updateTicketAnalysis(token, ticket.id, {
+        analysis_notes: analysisNotes,
+        analysis_approval_required: analysisRequired,
+      });
+      setTicket(updated);
+      setAnalysisMsg("Analisa tersimpan.");
+    } catch (err) {
+      setAnalysisMsg(err instanceof Error ? err.message : "Gagal menyimpan analisa");
+    } finally {
+      setAnalysisSaving(false);
     }
   }
 
@@ -349,7 +381,7 @@ export default function TicketDetailPage() {
   // bisa lihat & klik tombol claim asal statusnya cocok. Sekarang wajib
   // role staff_it juga, konsisten dengan validasi yang sudah ada di backend.
   const canClaim =
-    user.role === "staff_it" &&
+    canEditTicket(user.role) &&
     (ticket.status === "unassigned" ||
       (ticket.status === "assigned" && ticket.assigned_to === user.id));
   const canResolve =
@@ -371,7 +403,16 @@ export default function TicketDetailPage() {
             // yang dia pegang adalah hasil scan bertanda tangan yang di-upload
             // balik oleh staf, jadi tombolnya tidak ditampilkan untuk role
             // 'user'. Lihat SignoffPanel di bawah untuk daftar dokumennya.
-            ...(ticket.status === "closed" && user.role !== "user"
+            // Cetak dokumen persetujuan analisa — tersedia sebelum tiket
+            // diklaim, untuk staf/leader/admin (bukan pelapor).
+            ...(ticket.status !== "closed" && canSignoff(user.role)
+              ? [{
+                  label: "🖨️ Cetak Persetujuan Analisa",
+                  href: `/tickets/${ticket.id}/print-analysis`,
+                  variant: "secondary" as const,
+                }]
+              : []),
+            ...(ticket.status === "closed" && canSignoff(user.role)
               ? [{
                   label: "🖨️ Cetak BAST",
                   href: `/tickets/${ticket.id}/print`,
@@ -884,6 +925,65 @@ export default function TicketDetailPage() {
             </div>
           )}
 
+          {/* Analisa/catatan staf IT — diisi sebelum cetak dokumen persetujuan. */}
+          {token && canSignoff(user.role) && ticket.status !== "closed" && (
+            <form
+              onSubmit={handleSaveAnalysis}
+              className="mt-4 rounded-md border border-border bg-card p-4"
+            >
+              <p className="mb-1 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Analisa / Catatan Staf IT
+              </p>
+              <p className="mb-3 text-[11px] text-text-muted/80">
+                Isi hasil analisa, lalu cetak dokumen persetujuan lewat tombol di header.
+                Scan bertanda tangan pelapor wajib diunggah sebelum tiket diklaim bila gate aktif.
+              </p>
+              <RichTextEditor
+                value={analysisNotes}
+                onChange={setAnalysisNotes}
+                placeholder="Tuliskan hasil analisa / catatan penanganan..."
+              />
+              <label className="mt-3 flex cursor-pointer items-center gap-2.5 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={analysisRequired === null
+                    ? Boolean(categories.find((c) => c.id === ticket.category_id)?.requires_analysis_approval)
+                    : analysisRequired}
+                  onChange={(e) => setAnalysisRequired(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                Wajibkan persetujuan analisa sebelum klaim
+                {analysisRequired === null && (
+                  <span className="text-text-muted">(ikut pengaturan kategori)</span>
+                )}
+              </label>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={analysisSaving}
+                  className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-card transition-all duration-150 hover:bg-accent/80 disabled:opacity-50"
+                >
+                  {analysisSaving ? "Menyimpan..." : "Simpan Analisa"}
+                </button>
+                {analysisMsg && <span className="text-xs text-text-muted">{analysisMsg}</span>}
+              </div>
+            </form>
+          )}
+
+          {/* Dokumen persetujuan analisa yang sudah ditandatangani. */}
+          {token && (
+            <SignoffPanel
+              token={token}
+              ticketId={ticket.id}
+              isClosed={false}
+              reporterName={ticket.created_by_name}
+              canDelete={isAdmin}
+              canUpload={canSignoff(user.role)}
+              docType="analysis"
+              title="Persetujuan Analisa"
+            />
+          )}
+
           {/* Bukti serah-terima: cetak BAST (lewat tombol di header) lalu
               unggah scan yang sudah ditandatangani pelapor. */}
           {token && (
@@ -893,7 +993,7 @@ export default function TicketDetailPage() {
               isClosed={ticket.status === "closed"}
               reporterName={ticket.created_by_name}
               canDelete={isAdmin}
-              canUpload={user.role !== "user"}
+              canUpload={canSignoff(user.role)}
             />
           )}
         </div>

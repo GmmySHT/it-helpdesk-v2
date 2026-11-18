@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { Ticket, TicketComment, getTicket, listComments, fileUrl } from "@/lib/api";
+import { Ticket, TicketComment, getTicket, listComments, getDocumentNumber, listCoordinators, fileUrl } from "@/lib/api";
 
 const STATUS_LABEL: Record<string, string> = {
   pending_approval: "Menunggu Persetujuan",
@@ -122,6 +122,8 @@ export default function TicketPrintPage() {
 
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [comments, setComments] = useState<TicketComment[]>([]);
+  const [docNumber, setDocNumber] = useState("");
+  const [coordinatorName, setCoordinatorName] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -138,6 +140,12 @@ export default function TicketPrintPage() {
     listComments(token, ticketId)
       .then(setComments)
       .catch(() => {});
+    listCoordinators(token)
+      .then((users) => setCoordinatorName(users?.[0]?.name || ""))
+      .catch(() => setCoordinatorName(""));
+    getDocumentNumber(token, ticketId, "bast")
+      .then((res) => setDocNumber(res.doc_number))
+      .catch(() => setDocNumber("BAST-....-...."));
   }, [token, ticketId]);
 
   if (isLoading || !ticket) {
@@ -183,6 +191,7 @@ export default function TicketPrintPage() {
             Berita Acara Serah-Terima Penyelesaian Tiket IT
           </h1>
           <p className="mt-1 text-sm">{INSTITUTION_NAME}</p>
+          <p className="mt-2 text-xs">Nomor Dokumen: <strong>{docNumber || "BAST-....-...."}</strong></p>
         </div>
 
         <p className="mb-5 text-sm leading-relaxed">
@@ -325,37 +334,45 @@ export default function TicketPrintPage() {
           pekerjaan dan menyetujui tiket ditutup.
         </p>
 
-        {/* Area tanda tangan */}
-        <div className="mt-10 grid grid-cols-2 gap-10 text-center text-sm">
+        {/* Empat kolom tanda tangan: Manajer pelapor, Analyst,
+            Programmer/pengerja, Koordinator/Leader IT. */}
+        <div className="mt-10 grid grid-cols-2 gap-8 text-center text-sm">
           <div>
-            <p className="mb-20">Pelapor / Penerima Pekerjaan</p>
+            <p className="mb-20">Manajer dari Pelapor</p>
             <p className="border-t border-black pt-1 font-semibold">
-              {ticket.created_for_name || ticket.created_by_name || "(...........................)"}
+              ...........................
             </p>
             <p className="text-xs text-neutral-600">Nama jelas &amp; tanda tangan</p>
           </div>
           <div>
-            <p className="mb-20">Teknisi / Pelaksana</p>
+            <p className="mb-20">Analyst</p>
             <p className="border-t border-black pt-1 font-semibold">
-              {ticket.claimed_by_name || ticket.assigned_to_name || "(...........................)"}
+              {ticket.analysis_by_name || "..........................."}
             </p>
             <p className="text-xs text-neutral-600">Nama jelas &amp; tanda tangan</p>
           </div>
         </div>
 
-        <div className="mt-12 grid grid-cols-2 gap-10 text-center text-sm">
+        <div className="mt-10 grid grid-cols-2 gap-8 text-center text-sm">
           <div>
-            <p className="mb-20">Mengetahui, Koordinator IT</p>
+            <p className="mb-20">Programmer / Pelaksana Tiket</p>
             <p className="border-t border-black pt-1 font-semibold">
-              (...........................)
+              {ticket.claimed_by_name || ticket.assigned_to_name || "..........................."}
             </p>
+            <p className="text-xs text-neutral-600">Nama jelas &amp; tanda tangan</p>
           </div>
           <div>
-            <p className="mb-20">Tanggal Tanda Tangan</p>
+            <p className="mb-20">Mengetahui, Koordinator / Leader IT</p>
             <p className="border-t border-black pt-1 font-semibold">
-              ........ / ........ / ............
+              {coordinatorName || "..........................."}
             </p>
+            <p className="text-xs text-neutral-600">Nama jelas &amp; tanda tangan</p>
           </div>
+        </div>
+
+        <div className="mt-8 text-center text-sm">
+          <p className="mb-2">Tanggal Tanda Tangan</p>
+          <p className="font-semibold">........ / ........ / ............</p>
         </div>
 
         <p className="mt-10 border-t border-neutral-300 pt-2 text-[10px] leading-relaxed text-neutral-500">

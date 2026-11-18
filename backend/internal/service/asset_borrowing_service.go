@@ -27,7 +27,7 @@ func (s *AssetBorrowingService) Create(ctx context.Context, borrowing *model.Ass
 
 	// Notifikasi ke semua IT staff & leader bahwa ada permintaan peminjaman baru
 	if s.notifService != nil && s.userRepo != nil {
-		staff, _ := s.userRepo.ListByRoles(ctx, model.RoleStaffIT, model.RoleLeader)
+		staff, _ := s.userRepo.ListByRoles(ctx, model.RoleITSupport, model.RoleLeader)
 		for _, u := range staff {
 			s.notifService.Notify(ctx, u.ID, nil, "asset_borrowing_request",
 				"Permintaan Peminjaman Aset Baru",
@@ -55,7 +55,7 @@ func (s *AssetBorrowingService) actorLabel(ctx context.Context, userID string) s
 	switch u.Role {
 	case model.RoleLeader:
 		role = "Leader"
-	case model.RoleStaffIT:
+	case model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps:
 		role = "Staff IT"
 	case model.RoleAdmin:
 		role = "Admin"

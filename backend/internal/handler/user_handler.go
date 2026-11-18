@@ -29,7 +29,7 @@ func NewUserHandler(userRepo *repository.UserRepository, userService *service.Us
 // Dipakai frontend untuk mengisi dropdown "pilih staf" saat leader
 // melakukan assign langsung atau reassign paksa.
 func (h *UserHandler) ListStaff(w http.ResponseWriter, r *http.Request) {
-	staff, err := h.userRepo.ListByRole(r.Context(), model.RoleStaffIT)
+	staff, err := h.userRepo.ListByRoles(r.Context(), model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal mengambil daftar staf")
 		return
@@ -45,6 +45,17 @@ func (h *UserHandler) ListReporters(w http.ResponseWriter, r *http.Request) {
 	users, err := h.userRepo.ListReporters(r.Context())
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal mengambil daftar pelapor")
+		return
+	}
+	respondJSON(w, http.StatusOK, users)
+}
+
+// ListCoordinators mengembalikan user berrole leader/admin — dipakai halaman
+// cetak untuk mengisi baris Koordinator IT / Leader IT dari data sistem.
+func (h *UserHandler) ListCoordinators(w http.ResponseWriter, r *http.Request) {
+	users, err := h.userRepo.ListByRoles(r.Context(), model.RoleLeader)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "gagal mengambil daftar koordinator")
 		return
 	}
 	respondJSON(w, http.StatusOK, users)

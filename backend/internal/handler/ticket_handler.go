@@ -164,6 +164,8 @@ func (h *TicketHandler) Claim(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusForbidden, err.Error())
 		case errors.Is(err, service.ErrTicketNotClaimable):
 			respondError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, service.ErrAnalysisApprovalRequired):
+			respondError(w, http.StatusPreconditionFailed, err.Error())
 		case errors.Is(err, repository.ErrTicketAlreadyClaimed):
 			respondError(w, http.StatusConflict, err.Error())
 		default:
@@ -533,6 +535,37 @@ func (h *TicketHandler) UpdateDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respondJSON(w, http.StatusOK, ticket)
+}
+
+// UpdateAnalysis — PATCH /tickets/{id}/analysis
+// Simpan analisa/catatan staf IT + opsional override gate persetujuan.
+func (h *TicketHandler) UpdateAnalysis(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	role, _ := r.Context().Value(appmiddleware.ContextRole).(model.UserRole)
+
+	var req struct {
+		AnalysisNotes           string `json:"analysis_notes"`
+		AnalysisApprovalRequired *bool  `json:"analysis_approval_required"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "body request tidak valid")
+		return
+	}
+
+	ticket, err := h.ticketService.UpdateAnalysis(r.Context(), id, req.AnalysisNotes, req.AnalysisApprovalRequired, userID, role)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrTicketNotFound):
+			respondError(w, http.StatusNotFound, "tiket tidak ditemukan")
+		case errors.Is(err, service.ErrOnlyLeaderCanAssign):
+			respondError(w, http.StatusForbidden, "role ini tidak boleh mengisi analisa tiket")
+		default:
+			respondInternal(w, err, "gagal menyimpan analisa")
+		}
+		return
+	}
 	respondJSON(w, http.StatusOK, ticket)
 }
 

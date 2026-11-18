@@ -39,6 +39,19 @@ func NewUserService(userRepo *repository.UserRepository, auth *AuthService) *Use
 	return &UserService{userRepo: userRepo, auth: auth}
 }
 
+// isKnownRole menerima role bawaan ATAU role dinamis yang sudah terdaftar
+// di matriks RBAC. Role baru cukup dibuat lewat Manajemen Akses, lalu bisa
+// langsung dipilih di Manajemen User — tidak perlu edit kode.
+func (s *UserService) isKnownRole(ctx context.Context, role model.UserRole) bool {
+	for _, r := range model.DefaultRoles {
+		if role == r {
+			return true
+		}
+	}
+	known, err := s.userRepo.RoleExists(ctx, string(role))
+	return err == nil && known
+}
+
 type RegisterInput struct {
 	Name       string
 	Email      string
@@ -87,10 +100,7 @@ type CreateUserInput struct {
 // bisa menaikkan diri sendiri/orang lain setara dengannya tanpa
 // persetujuan admin.
 func (s *UserService) CreateByAdmin(ctx context.Context, input CreateUserInput) (*model.User, error) {
-	switch input.Role {
-	case model.RoleUser, model.RoleStaffIT, model.RoleLeader, model.RoleAdmin:
-		// valid
-	default:
+	if !s.isKnownRole(ctx, input.Role) {
 		return nil, ErrInvalidRole
 	}
 
@@ -158,10 +168,7 @@ type UpdateUserInput struct {
 // mengedit (dan menetapkan role untuk) akun user/staff_it; role
 // leader/admin hanya bisa disentuh oleh admin.
 func (s *UserService) UpdateByAdmin(ctx context.Context, input UpdateUserInput) (*model.User, error) {
-	switch input.Role {
-	case model.RoleUser, model.RoleStaffIT, model.RoleLeader, model.RoleAdmin:
-		// valid
-	default:
+	if !s.isKnownRole(ctx, input.Role) {
 		return nil, ErrInvalidRole
 	}
 

@@ -24,7 +24,12 @@ type StaffKPI struct {
 	Department string `json:"department,omitempty"`
 
 	// Dari tiket
+	TicketsCreated       int     `json:"tickets_created"`
 	TicketsResolved      int     `json:"tickets_resolved"`
+	// TicketsAnalyzed menghitung tiket yang dianalisa staf ini (analysis_by).
+	// Berbeda dengan TicketsResolved: analyst sering tidak mengerjakan tiket
+	// yang dia analisa, jadi tanpa kolom ini kontribusinya hilang dari KPI.
+	TicketsAnalyzed      int     `json:"tickets_analyzed"`
 	AvgResolutionMinutes float64 `json:"avg_resolution_minutes"`
 	SLACompliantCount    int     `json:"sla_compliant_count"`
 	SLAComplianceRate    float64 `json:"sla_compliance_rate"`
@@ -101,6 +106,24 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
 			GROUP BY t.claimed_by
 		),
+		analysis_stats AS (
+			SELECT t.analysis_by AS staff_id, COUNT(*) AS tickets_analyzed
+			FROM tickets t
+			WHERE t.deleted_at IS NULL
+				AND t.analysis_by IS NOT NULL
+				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
+				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			GROUP BY t.analysis_by
+		),
+		created_stats AS (
+			SELECT t.created_by AS staff_id, COUNT(*) AS tickets_created
+			FROM tickets t
+			WHERE t.deleted_at IS NULL
+				AND t.created_by IS NOT NULL
+				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
+				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			GROUP BY t.created_by
+		),
 		daily_stats AS (
 			SELECT
 				dt.created_by AS staff_id,
@@ -114,6 +137,8 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 		)
 		SELECT
 			u.id, u.name, u.role::text, COALESCE(u.department, ''),
+			COALESCE(cs.tickets_created, 0),
+			COALESCE(as_.tickets_analyzed, 0),
 			COALESCE(ts.tickets_resolved, 0),
 			COALESCE(ts.avg_minutes, 0),
 			COALESCE(ts.sla_ok, 0),
@@ -123,16 +148,18 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 			COALESCE(ds.avg_response, 0)
 		FROM users u
 		LEFT JOIN ticket_stats ts ON ts.staff_id = u.id
+		LEFT JOIN analysis_stats as_ ON as_.staff_id = u.id
+		LEFT JOIN created_stats cs ON cs.staff_id = u.id
 		LEFT JOIN daily_stats ds ON ds.staff_id = u.id
 		WHERE u.is_active = true
 			AND u.deleted_at IS NULL
-			AND u.role IN ('staff_it', 'leader', 'admin')
+			AND u.role::text IN ('it_support', 'analyst', 'programmer', 'devops', 'leader', 'admin')
 			AND ($3::uuid IS NULL OR u.id = $3::uuid)
 			-- Staf tanpa pekerjaan sama sekali tidak perlu muncul sebagai baris
 			-- kosong di leaderboard; leader yang tidak menangani tiket juga
 			-- dilewati supaya tabel berisi orang yang benar-benar bekerja.
-			AND (COALESCE(ts.tickets_resolved, 0) > 0 OR COALESCE(ds.daily_tasks, 0) > 0)
-		ORDER BY (COALESCE(ts.tickets_resolved, 0) + COALESCE(ds.daily_tasks, 0)) DESC, u.name
+			AND (COALESCE(ts.tickets_resolved, 0) > 0 OR COALESCE(ds.daily_tasks, 0) > 0 OR COALESCE(cs.tickets_created, 0) > 0 OR COALESCE(as_.tickets_analyzed, 0) > 0)
+			ORDER BY (COALESCE(ts.tickets_resolved, 0) + COALESCE(ds.daily_tasks, 0) + COALESCE(cs.tickets_created, 0) + COALESCE(as_.tickets_analyzed, 0)) DESC, u.name
 	`, from, to, staffFilter)
 	if err != nil {
 		return nil, err
@@ -144,6 +171,7 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 		var k StaffKPI
 		if err := rows.Scan(
 			&k.StaffID, &k.StaffName, &k.Role, &k.Department,
+			&k.TicketsCreated, &k.TicketsAnalyzed,
 			&k.TicketsResolved, &k.AvgResolutionMinutes, &k.SLACompliantCount, &k.ReopenCount,
 			&k.DailyTasks, &k.AvgDailyDurationMin, &k.AvgDailyResponseMin,
 		); err != nil {
@@ -152,7 +180,7 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 		if k.TicketsResolved > 0 {
 			k.SLAComplianceRate = float64(k.SLACompliantCount) / float64(k.TicketsResolved) * 100
 		}
-		k.TotalWorkItems = k.TicketsResolved + k.DailyTasks
+		k.TotalWorkItems = k.TicketsResolved + k.DailyTasks + k.TicketsCreated + k.TicketsAnalyzed
 		list = append(list, k)
 	}
 	return list, rows.Err()

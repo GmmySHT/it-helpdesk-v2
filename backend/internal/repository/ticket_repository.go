@@ -87,6 +87,8 @@ func (r *TicketRepository) Create(ctx context.Context, t *model.Ticket) error {
 const ticketListSelect = `
 	SELECT t.id, COALESCE(t.ticket_code, ''), t.title, t.description, t.category_id, t.priority, t.status,
 		t.created_by, creator.name,
+		t.updated_by, updater.name, t.updated_at,
+		COALESCE(t.analysis_notes, ''), t.analysis_by, analyst.name, t.analysis_approval_required,
 		t.created_for, creator2.name,
 		t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
 		t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
@@ -95,6 +97,8 @@ const ticketListSelect = `
 	EXISTS (SELECT 1 FROM ticket_signoffs s WHERE s.ticket_id = t.id) AS has_signoff
 	FROM tickets t
 	LEFT JOIN users creator ON creator.id = t.created_by
+	LEFT JOIN users updater ON updater.id = t.updated_by
+	LEFT JOIN users analyst ON analyst.id = t.analysis_by
 	LEFT JOIN users creator2 ON creator2.id = t.created_for
 	LEFT JOIN users assignee ON assignee.id = t.assigned_to
 	LEFT JOIN users claimer ON claimer.id = t.claimed_by
@@ -173,6 +177,8 @@ func (r *TicketRepository) queryTickets(ctx context.Context, query string, args 
 		if err := rows.Scan(
 			&t.ID, &t.TicketCode, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
 			&t.CreatedBy, &t.CreatedByName,
+			&t.UpdatedBy, &t.UpdatedByName, &t.UpdatedAt,
+			&t.AnalysisNotes, &t.AnalysisBy, &t.AnalysisByName, &t.AnalysisApprovalRequired,
 			&t.CreatedFor, &t.CreatedForName,
 			&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 			&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
@@ -209,6 +215,8 @@ func (r *TicketRepository) FindByID(ctx context.Context, id string) (*model.Tick
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&t.ID, &t.TicketCode, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
 		&t.CreatedBy, &t.CreatedByName,
+		&t.UpdatedBy, &t.UpdatedByName, &t.UpdatedAt,
+		&t.AnalysisNotes, &t.AnalysisBy, &t.AnalysisByName, &t.AnalysisApprovalRequired,
 		&t.CreatedFor, &t.CreatedForName,
 		&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 		&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
@@ -223,6 +231,30 @@ func (r *TicketRepository) FindByID(ctx context.Context, id string) (*model.Tick
 		return nil, err
 	}
 	return &t, nil
+}
+
+// UpdateAnalysis menyimpan analisa/catatan staf IT dan (opsional) override gate.
+func (r *TicketRepository) UpdateAnalysis(ctx context.Context, ticketID, notes, actorID string, required *bool) error {
+	_, err := r.db.Exec(ctx, `UPDATE tickets SET analysis_notes = $2, analysis_by = $3, analysis_approval_required = $4 WHERE id = $1`, ticketID, notes, actorID, required)
+	return err
+}
+
+// GateRequired membaca status gate efektif: override tiket bila ada, kalau
+// tidak memakai default kategori.
+func (r *TicketRepository) GateRequired(ctx context.Context, ticketID string) (bool, error) {
+	var required bool
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(t.analysis_approval_required, c.requires_analysis_approval)
+		FROM tickets t JOIN categories c ON c.id = t.category_id WHERE t.id = $1
+	`, ticketID).Scan(&required)
+	return required, err
+}
+
+// HasApprovedAnalysis true bila ada scan persetujuan analisa pada tiket.
+func (r *TicketRepository) HasApprovedAnalysis(ctx context.Context, ticketID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ticket_signoffs WHERE ticket_id = $1 AND doc_type = 'analysis')`, ticketID).Scan(&exists)
+	return exists, err
 }
 
 // Claim menandai tiket sebagai diklaim oleh seorang staf.
@@ -289,12 +321,13 @@ func (r *TicketRepository) Resolve(ctx context.Context, ticketID, claimedBy stri
 // dipakai leader untuk mengoreksi tiket kalau ada perubahan/kesalahan
 // setelah dibuat. Bisa dilakukan KAPAN SAJA selama tiket belum closed
 // (validasi status & role dilakukan di service, bukan di sini).
-func (r *TicketRepository) UpdateDetails(ctx context.Context, ticketID, title, description, categoryID string, priority model.TicketPriority) error {
+func (r *TicketRepository) UpdateDetails(ctx context.Context, ticketID, title, description, categoryID string, priority model.TicketPriority, updatedBy string) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE tickets
-		SET title = $1, description = $2, category_id = $3, priority = $4
+		SET title = $1, description = $2, category_id = $3, priority = $4,
+			updated_by = $6, updated_at = now()
 		WHERE id = $5
-	`, title, description, categoryID, priority, ticketID)
+	`, title, description, categoryID, priority, ticketID, updatedBy)
 	return err
 }
 
@@ -421,6 +454,8 @@ func (r *TicketRepository) ListDeleted(ctx context.Context) ([]model.Ticket, err
 	query := `
 		SELECT t.id, t.title, t.description, t.category_id, t.priority, t.status,
 			t.created_by, creator.name,
+			t.updated_by, updater.name, t.updated_at,
+			COALESCE(t.analysis_notes, ''), t.analysis_by, analyst.name, t.analysis_approval_required,
 			t.created_for, creator2.name,
 			t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
 			t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
@@ -430,6 +465,8 @@ func (r *TicketRepository) ListDeleted(ctx context.Context) ([]model.Ticket, err
 			t.created_at
 		FROM tickets t
 		LEFT JOIN users creator  ON creator.id  = t.created_by
+		LEFT JOIN users updater  ON updater.id  = t.updated_by
+		LEFT JOIN users analyst  ON analyst.id  = t.analysis_by
 		LEFT JOIN users creator2 ON creator2.id = t.created_for
 		LEFT JOIN users assignee ON assignee.id = t.assigned_to
 		LEFT JOIN users claimer  ON claimer.id  = t.claimed_by
@@ -450,6 +487,8 @@ func (r *TicketRepository) ListDeleted(ctx context.Context) ([]model.Ticket, err
 		if err := rows.Scan(
 			&t.ID, &t.Title, &t.Description, &t.CategoryID, &t.Priority, &t.Status,
 			&t.CreatedBy, &t.CreatedByName,
+			&t.UpdatedBy, &t.UpdatedByName, &t.UpdatedAt,
+			&t.AnalysisNotes, &t.AnalysisBy, &t.AnalysisByName, &t.AnalysisApprovalRequired,
 			&t.CreatedFor, &t.CreatedForName,
 			&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 			&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,

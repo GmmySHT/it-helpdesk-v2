@@ -27,8 +27,8 @@
    - 3.10 [Kode Tiket & BAST](#310-kode-tiket--bast)
    - 3.11 [Daily Task](#311-daily-task)
    - 3.12 [Kata Sandi & Profil](#312-kata-sandi--profil)
-4. [Panduan Role: User (Pelapor)](#4-panduan-role-user-pelapor)
-5. [Panduan Role: Staff IT](#5-panduan-role-staff-it)
+4. [Panduan Role: Pelapor](#4-panduan-role-pelapor)
+5. [Panduan Role: IT Support & Staf Teknis](#5-panduan-role-it-support--staf-teknis)
 6. [Panduan Role: Leader (Kepala IT)](#6-panduan-role-leader-kepala-it)
 7. [Panduan Role: Admin](#7-panduan-role-admin)
 8. [Alur Kerja Lengkap](#8-alur-kerja-lengkap)
@@ -185,12 +185,12 @@ Dashboard performa tim IT berbasis data tiket **dan daily task**, dengan tampila
 
 | Role | Yang terlihat | Bisa pilih staf? |
 |---|---|---|
-| `staff_it` | Hanya KPI dirinya sendiri | ❌ (server memaksa ke ID sendiri) |
+| `it_support` / `analyst` / `programmer` / `devops` | Hanya KPI dirinya sendiri | ❌ (server memaksa ke ID sendiri) |
 | `leader` | Semua staf | ✅ |
 | `admin` | Semua staf | ✅ |
 | `user` | Tidak punya akses modul Laporan (403) | — |
 
-> Pembatasan ini ditegakkan **di server**, bukan hanya di tampilan. Staf IT yang mengubah URL atau mengirim `?staff_id=` orang lain tetap hanya mendapat datanya sendiri.
+> Pembatasan ini ditegakkan **di server**, bukan hanya di tampilan. Staf teknis yang mengubah URL atau mengirim `?staff_id=` orang lain tetap hanya mendapat datanya sendiri.
 
 **Isi laporan:**
 - **Ringkasan KPI** — total tiket, tiket selesai, total daily task, total item pekerjaan, rata-rata penyelesaian, kepatuhan SLA, jumlah reopen
@@ -283,7 +283,7 @@ Admin dapat memberikan akses berbeda untuk user individu, mengabaikan default ro
 - Monitoring SIMRS
 - Manajemen Akses
 
-> **Daily Task tidak lewat RBAC modul** — aksesnya dijaga langsung oleh role (`staff_it`, `leader`, `admin`). Jadi menaikkan akses modul `reports` ke `user` tidak otomatis membuka Daily Task.
+> **Daily Task tidak lewat RBAC modul** — aksesnya dijaga langsung oleh role (`it_support`, `analyst`, `programmer`, `devops`, `leader`, `admin`). Jadi menaikkan akses modul `reports` ke `user` tidak otomatis membuka Daily Task.
 
 **Perubahan akses berlaku langsung** — tidak perlu restart server atau logout-login ulang.
 
@@ -410,7 +410,7 @@ Modul pencatatan pekerjaan harian staf IT di luar tiket resmi — biasanya permi
 - **Durasi** = waktu selesai − waktu mulai
 - **Respon time** = waktu mulai − waktu komplain
 
-**Hak akses:** yang boleh mencatat hanya `staff_it`, `leader`, `admin`. Staf IT hanya melihat & mengubah catatannya sendiri; leader/admin melihat semua catatan tim. Role `user` tidak punya akses (403).
+**Hak akses:** yang boleh mencatat hanya `staff_it`, `leader`, `admin`. Staf IT hanya melihat & mengubah catatannya sendiri; leader/admin melihat semua catatan tim. Role `pelapor` tidak punya akses (403).
 
 **Daftar daily task** punya filter: rentang tanggal, unit, dan pencarian teks (kendala/pelapor/unit).
 
@@ -437,7 +437,7 @@ Dua jalur berbeda, sengaja dipisah karena risikonya berbeda:
 
 **Reset oleh Leader / Admin** (`/admin/users` → ikon kunci pada baris user):
 - Password lama tidak diminta
-- Batas hierarki: `leader` hanya bisa mereset akun `user` dan `staff_it`; akun `leader`/`admin` hanya bisa direset `admin`
+- Batas hierarki: `leader` hanya bisa mereset akun `pelapor` dan staf teknis; akun `leader`/`admin` hanya bisa direset `admin`
 - Mereset akun sendiri ditolak — arahkan ke halaman Profil
 - Setelah direset, akun ditandai **wajib ganti password**: saat login berikutnya halaman Profil menampilkan banner kuning yang meminta pemilik mengganti password hasil reset
 - Semua sesi aktif akun itu langsung berakhir
@@ -445,7 +445,7 @@ Dua jalur berbeda, sengaja dipisah karena risikonya berbeda:
 
 ---
 
-## 4. Panduan Role: User (Pelapor)
+## 4. Panduan Role: Pelapor
 
 ### Siapa User?
 Karyawan umum di luar divisi IT — bisa dari departemen apapun (HRD, keuangan, keperawatan, dll.).
@@ -545,7 +545,7 @@ Setelah tiket ditutup, staff IT mencetak **BAST** (Berita Acara Serah-Terima) da
 
 ---
 
-## 5. Panduan Role: Staff IT
+## 5. Panduan Role: IT Support & Staf Teknis
 
 ### Siapa Staff IT?
 Teknisi atau anggota divisi IT yang bertugas menangani tiket dan mengelola aset perangkat IT.
@@ -765,7 +765,7 @@ Buka menu **Admin → Kelola Pengguna**:
 4. Sampaikan password baru ke pemilik akun lewat jalur aman; saat login mereka diminta mengganti sendiri
 
 **Batas yang perlu diketahui sebagai leader:**
-- Kamu hanya bisa mereset akun `user` dan `staff_it`. Akun sesama `leader` dan `admin` **tidak bisa** — minta admin yang melakukannya.
+- Kamu hanya bisa mereset akun `pelapor` dan staf teknis. Akun sesama `leader` dan `admin` **tidak bisa** — minta admin yang melakukannya.
 - Mereset password akun sendiri ditolak; gunakan halaman **Profil & Kata Sandi** di sidebar.
 - Setelah direset, seluruh sesi aktif akun itu langsung berakhir.
 
@@ -816,7 +816,7 @@ Admin memiliki **semua akses Leader** (approve tiket, close, reopen, reassign, d
 Buka menu **Admin → Manajemen Akses**:
 
 #### Tab Per Role — Ubah Default Akses
-1. Pilih role yang ingin diubah (user / staff_it / leader)
+1. Pilih role yang ingin diubah (pelapor / it_support / analyst / programmer / devops / leader / admin)
 2. Tiap modul ditampilkan dengan pilihan: `none` / `view` / `editor`
 3. Ubah sesuai kebutuhan
 4. Klik **Simpan** — berlaku langsung untuk semua user dengan role tersebut

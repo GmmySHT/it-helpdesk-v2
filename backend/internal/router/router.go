@@ -109,7 +109,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 	// Modul Daily Task — catatan pekerjaan harian di luar tiket.
 	dailyTaskRepo := repository.NewDailyTaskRepository(db)
-	dailyTaskHandler := handler.NewDailyTaskHandler(dailyTaskRepo)
+	dailyTaskHandler := handler.NewDailyTaskHandler(dailyTaskRepo, repository.NewDailyTaskAttachmentRepository(db))
 
 	// Laporan KPI gabungan (tiket + daily task) beserta ekspor CSV.
 	kpiHandler := handler.NewKPIHandler(statsRepo)
@@ -186,13 +186,26 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Post("/tickets/{id}/approve", ticketHandler.Approve)
 			r.Post("/tickets/{id}/reject", ticketHandler.Reject)
 			r.Patch("/tickets/{id}/deadline", ticketHandler.UpdateDeadline)
-			r.Patch("/tickets/{id}", ticketHandler.UpdateDetails)
+			r.Patch("/tickets/{id}/analysis", ticketHandler.UpdateAnalysis)
+
+			// Edit detail tiket (judul/deskripsi/kategori/prioritas) — izin
+			// dinamis via RBAC modul ticketing level editor. Default:
+			// it_support/analyst/programmer/devops/leader/admin editor,
+			// pelapor view. Admin bisa mengubah ini lewat Manajemen Akses
+			// tanpa deploy ulang — jadi role BARU pun otomatis bisa edit
+			// kalau diberi level editor.
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "ticketing", model.AccessEditor))
+				r.Patch("/tickets/{id}", ticketHandler.UpdateDetails)
+			})
 
 			r.Get("/categories", categoryHandler.List)
+			r.Patch("/categories/{id}/approval-gate", categoryHandler.UpdateApprovalGate)
 			r.Get("/users/staff", userHandler.ListStaff)
 		// Daftar pelapor (role user) untuk dropdown filter di daftar tiket.
 		// Semua role yang login boleh membaca — hanya nama & departemen.
 		r.Get("/users/reporters", userHandler.ListReporters)
+	r.Get("/users/coordinators", userHandler.ListCoordinators)
 
 			// Manajemen User — HANYA leader/admin. Ini sengaja pakai
 			// RequireRole (bukan RequireModuleAccess seperti Laporan/Akses)
@@ -221,7 +234,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			// Statistik tim & tiket berisiko: hanya staff IT, leader, admin.
 			// Role 'user' (pelapor) tidak punya alasan melihat data tim.
 			r.Group(func(r chi.Router) {
-				r.Use(appmiddleware.RequireRole(model.RoleStaffIT, model.RoleLeader, model.RoleAdmin))
+				r.Use(appmiddleware.RequireRole(model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps, model.RoleLeader, model.RoleAdmin))
 				r.Get("/tickets/at-risk", ticketHandler.AtRisk)
 				r.Get("/stats/summary", statsHandler.Summary)
 				r.Get("/stats/staff-performance", statsHandler.StaffPerformance)
@@ -267,13 +280,15 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			// melihat catatannya sendiri (dijaga di handler), leader/admin
 			// melihat semua.
 			r.Group(func(r chi.Router) {
-				r.Use(appmiddleware.RequireRole(model.RoleStaffIT, model.RoleLeader, model.RoleAdmin))
+				r.Use(appmiddleware.RequireRole(model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps, model.RoleLeader, model.RoleAdmin))
 				r.Get("/units", dailyTaskHandler.ListUnits)
 				r.Get("/daily-tasks", dailyTaskHandler.List)
 				r.Get("/daily-tasks/{id}", dailyTaskHandler.Get)
 				r.Post("/daily-tasks", dailyTaskHandler.Create)
 				r.Put("/daily-tasks/{id}", dailyTaskHandler.Update)
 				r.Delete("/daily-tasks/{id}", dailyTaskHandler.Delete)
+				r.Post("/daily-tasks/{id}/attachments", dailyTaskHandler.UploadAttachments)
+				r.Delete("/daily-tasks/{id}/attachments/{attId}", dailyTaskHandler.DeleteAttachment)
 			})
 
 			r.Post("/tickets/{id}/rating", ratingHandler.Create)
@@ -283,6 +298,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Post("/tickets/{id}/comments", commentHandler.Create)
 
 			// Bukti serah-terima bertanda tangan pelapor (scan BAST).
+			r.Get("/tickets/{id}/document-number", signoffHandler.GetDocumentNumber)
 			r.Get("/tickets/{id}/signoffs", signoffHandler.List)
 			r.Post("/tickets/{id}/signoffs", signoffHandler.Create)
 			r.Delete("/tickets/{id}/signoffs/{signoffId}", signoffHandler.Delete)
@@ -356,7 +372,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 			// Asset delete — staff_it, leader, admin (siapapun kecuali user/pelapor)
 			r.Group(func(r chi.Router) {
-				r.Use(appmiddleware.RequireRole(model.RoleStaffIT, model.RoleLeader, model.RoleAdmin))
+				r.Use(appmiddleware.RequireRole(model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps, model.RoleLeader, model.RoleAdmin))
 				r.Delete("/assets/{id}", assetHandler.DeleteAsset)
 			})
 		})

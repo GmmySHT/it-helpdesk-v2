@@ -11,8 +11,8 @@ import (
 	"ticketing-it/backend/internal/repository"
 )
 
-var ErrOnlyLeaderCanAssign = errors.New("hanya leader/admin yang boleh langsung menugaskan tiket ke staf tertentu")
-var ErrOnlyLeaderCanSetDeadline = errors.New("hanya leader/admin yang boleh menentukan deadline tiket")
+var ErrOnlyLeaderCanAssign = errors.New("hanya leader, admin, atau analyst yang boleh langsung menugaskan tiket ke staf tertentu")
+var ErrOnlyLeaderCanSetDeadline = errors.New("hanya leader, admin, atau analyst yang boleh menentukan deadline tiket")
 var ErrOnlyStaffCanClaim = errors.New("hanya staf IT yang boleh mengklaim tiket")
 var ErrOnlyLeaderCanApprove = errors.New("hanya leader/admin yang boleh menyetujui atau menolak tiket")
 var ErrTicketNotPendingApproval = errors.New("tiket ini tidak dalam status menunggu persetujuan")
@@ -105,10 +105,16 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 		input.Priority = model.PriorityMedium
 	}
 
-	// Validasi: hanya leader/admin boleh buat tiket atas nama user lain
+	// Leader/admin DAN analyst boleh buat tiket atas nama user lain, langsung
+	// tugaskan ke staf, dan menentukan deadline — Analyst sering bertindak
+	// sebagai pembuat tiket atas permintaan user, jadi formnya disamakan.
+	canManageTicket := model.IsSupervisor(input.RequesterRole) ||
+		input.RequesterRole == model.RoleAnalyst
+
+	// Validasi: pembuat atas nama user lain harus supervisor atau analyst.
 	if input.CreatedFor != nil {
-		if input.RequesterRole != model.RoleLeader && input.RequesterRole != model.RoleAdmin {
-			return nil, errors.New("hanya leader atau admin yang dapat membuat tiket atas nama user lain")
+		if !canManageTicket {
+			return nil, errors.New("hanya leader, admin, atau analyst yang dapat membuat tiket atas nama user lain")
 		}
 	}
 
@@ -124,12 +130,12 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 
 	// Jika dibuat oleh leader/admin (atas nama user atau untuk tim), tidak perlu approval
 	// Hanya tiket dari role 'user' biasa yang perlu approval
-	requiresApproval := input.RequesterRole == model.RoleUser
+	requiresApproval := model.IsReporter(input.RequesterRole)
 
 	if requiresApproval {
 		ticket.Status = model.StatusPendingApproval
 	} else if input.AssignedTo != nil {
-		if input.RequesterRole != model.RoleLeader && input.RequesterRole != model.RoleAdmin {
+		if !canManageTicket {
 			return nil, ErrOnlyLeaderCanAssign
 		}
 		now := time.Now()
@@ -149,7 +155,7 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 	// karena ada audit tanggal tertentu) — bukan sekadar tebakan dari
 	// priority. Staf/user tidak boleh mengisi field ini.
 	if input.CustomDeadline != nil {
-		if input.RequesterRole != model.RoleLeader && input.RequesterRole != model.RoleAdmin {
+		if !canManageTicket {
 			return nil, ErrOnlyLeaderCanSetDeadline
 		}
 		ticket.SLADeadline = input.CustomDeadline
@@ -163,6 +169,18 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 
 	if err := s.ticketRepo.Create(ctx, ticket); err != nil {
 		return nil, err
+	}
+
+	// Pemohon/pelapor yang dibuatkan tiket oleh staf (leader/admin/analyst)
+	// wajib dapat notifikasi juga — kalau tidak, dia tidak tahu tiketnya
+	// sudah terdaftar sampai kebetulan membuka daftar tiket. Dikirim sebelum
+	// cabang approval/penugasan supaya semua jalur create ter-cover.
+	if input.CreatedFor != nil && *input.CreatedFor != input.CreatedBy {
+		s.notifier.Notify(ctx, *input.CreatedFor, &ticket.ID,
+			"ticket_created_for_you",
+			"Tiket dibuat untukmu",
+			"Tiket \""+ticket.Title+"\" telah dibuatkan untukmu oleh "+s.actorName(ctx, input.CreatedBy)+".",
+		)
 	}
 
 	if requiresApproval {
@@ -192,7 +210,7 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 		// Tiket dibiarkan terbuka (unassigned) — semua staff_it perlu tahu
 		// ada tiket baru yang bisa diklaim siapa saja, bukan cuma menunggu
 		// mereka kebetulan buka halaman daftar tiket.
-		staffList, err := s.userRepo.ListByRole(ctx, model.RoleStaffIT)
+		staffList, err := s.userRepo.ListByRoles(ctx, model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps)
 		if err == nil {
 			for _, staff := range staffList {
 				s.notifier.Notify(ctx, staff.ID, &ticket.ID,
@@ -214,7 +232,7 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 // User biasa hanya melihat tiket yang dibuat olehnya ATAU untuk dirinya —
 // filter pelapor diabaikan untuk mereka karena hasilnya sudah terbatas.
 func (s *TicketService) List(ctx context.Context, filter repository.TicketFilter, userID, role string) ([]model.Ticket, error) {
-	if role == string(model.RoleLeader) || role == string(model.RoleAdmin) || role == string(model.RoleStaffIT) {
+	if model.IsSupervisor(model.UserRole(role)) || model.IsTechnicalStaff(model.UserRole(role)) {
 		return s.ticketRepo.ListFiltered(ctx, filter)
 	}
 	return s.ticketRepo.ListForUser(ctx, filter, userID)
@@ -243,7 +261,7 @@ func (s *TicketService) Claim(ctx context.Context, ticketID, userID string, role
 	// Hanya staff_it yang boleh mengklaim tiket — sesuai flowchart ("Staf klik
 	// Claim"). Sebelumnya validasi ini tidak ada sama sekali, jadi role apapun
 	// (bahkan 'user'/pelapor) bisa klaim tiket, yang jelas bukan yang dimaksud.
-	if role != model.RoleStaffIT {
+	if !model.CanClaimTicket(role) {
 		return nil, ErrOnlyStaffCanClaim
 	}
 
@@ -268,6 +286,17 @@ func (s *TicketService) Claim(ctx context.Context, ticketID, userID string, role
 		return nil, ErrTicketNotClaimable
 	}
 
+	// GATE persetujuan analisa: bila aktif (override tiket atau default
+	// kategori), tiket belum boleh diklaim sebelum scan dokumen persetujuan
+	// analisa bertanda tangan diunggah.
+	gateOn, err := s.ticketRepo.GateRequired(ctx, ticketID)
+	if err != nil { return nil, err }
+	if gateOn {
+		approved, err := s.ticketRepo.HasApprovedAnalysis(ctx, ticketID)
+		if err != nil { return nil, err }
+		if !approved { return nil, ErrAnalysisApprovalRequired }
+	}
+
 	// SLA deadline TIDAK dihitung ulang di sini lagi — sudah ditentukan sejak
 	// tiket dibuat (lihat Create), supaya jadi "batas waktu keseluruhan"
 	// yang konsisten, bukan mulai dari nol tiap kali diklaim.
@@ -284,7 +313,7 @@ func (s *TicketService) Claim(ctx context.Context, ticketID, userID string, role
 	claimerName := s.actorName(ctx, userID)
 
 	if wasUnassigned {
-		staffList, err := s.userRepo.ListByRole(ctx, model.RoleStaffIT)
+		staffList, err := s.userRepo.ListByRoles(ctx, model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps)
 		if err == nil {
 			for _, staff := range staffList {
 				if staff.ID == userID {
@@ -428,7 +457,7 @@ func (s *TicketService) Resolve(ctx context.Context, input ResolveInput) (*model
 // Close menandai tiket selesai secara final. Sesuai flowchart, hanya leader/admin
 // yang boleh close, dan hanya dari status 'resolved' (leader review dulu hasilnya).
 func (s *TicketService) Close(ctx context.Context, ticketID, userID string, role model.UserRole) (*model.Ticket, error) {
-	if role != model.RoleLeader && role != model.RoleAdmin {
+	if !model.IsSupervisor(role) {
 		return nil, ErrOnlyLeaderCanReview
 	}
 	if err := s.ticketRepo.Close(ctx, ticketID, userID); err != nil {
@@ -463,13 +492,14 @@ type UpdateTicketDetailsInput struct {
 	Priority    model.TicketPriority
 }
 
-// UpdateDetails membiarkan leader/admin mengoreksi detail tiket (judul,
-// deskripsi, kategori, prioritas) KAPAN SAJA selama tiket masih berjalan —
-// bukan bagian dari flowchart asli, tapi kebutuhan nyata: kadang ada
-// kesalahan input atau situasi berubah setelah tiket dibuat.
+// UpdateDetails mengoreksi detail tiket (judul, deskripsi, kategori,
+// prioritas) KAPAN SAJA selama tiket masih berjalan. Boleh dilakukan staf
+// teknis (it_support/analyst/programmer/devops) dan leader/admin — bukan
+// bagian flowchart asli, tapi kebutuhan nyata: kadang ada kesalahan input
+// atau situasi berubah setelah tiket dibuat.
 func (s *TicketService) UpdateDetails(ctx context.Context, input UpdateTicketDetailsInput) (*model.Ticket, error) {
-	if input.Role != model.RoleLeader && input.Role != model.RoleAdmin {
-		return nil, ErrOnlyLeaderCanAssign // reuse pesan "hanya leader/admin..." yang sudah ada
+	if !model.CanEditTicketDetails(input.Role) {
+		return nil, ErrOnlyLeaderCanAssign
 	}
 
 	ticket, err := s.ticketRepo.FindByID(ctx, input.TicketID)
@@ -480,12 +510,27 @@ func (s *TicketService) UpdateDetails(ctx context.Context, input UpdateTicketDet
 		return nil, ErrCannotEditClosedTicketDetails
 	}
 
-	if err := s.ticketRepo.UpdateDetails(ctx, input.TicketID, input.Title, input.Description, input.CategoryID, input.Priority); err != nil {
+	if err := s.ticketRepo.UpdateDetails(ctx, input.TicketID, input.Title, input.Description, input.CategoryID, input.Priority, input.UserID); err != nil {
 		return nil, err
 	}
 
 	return s.ticketRepo.FindByID(ctx, input.TicketID)
 }
+
+// UpdateAnalysis menyimpan analisa/catatan staf. Hanya role dengan izin edit
+// tiket (analyst/staff IT/leader/admin) yang boleh mengisi.
+func (s *TicketService) UpdateAnalysis(ctx context.Context, ticketID, notes string, required *bool, userID string, role model.UserRole) (*model.Ticket, error) {
+	if !model.CanEditTicketDetails(role) {
+		return nil, ErrOnlyLeaderCanAssign
+	}
+	if err := s.ticketRepo.UpdateAnalysis(ctx, ticketID, notes, userID, required); err != nil {
+		return nil, err
+	}
+	return s.ticketRepo.FindByID(ctx, ticketID)
+}
+
+// ErrAnalysisApprovalRequired dipakai gate klaim.
+var ErrAnalysisApprovalRequired = errors.New("tiket ini wajib memiliki scan persetujuan analisa bertanda tangan sebelum diklaim")
 
 type ReopenInput struct {
 	TicketID    string
@@ -502,7 +547,7 @@ type ReopenInput struct {
 // tidak mungkin ada reopen yang statusnya berubah tapi tidak tercatat di log,
 // atau sebaliknya.
 func (s *TicketService) Reopen(ctx context.Context, input ReopenInput) (*model.Ticket, error) {
-	if input.RequesterRole != model.RoleLeader && input.RequesterRole != model.RoleAdmin {
+	if !model.IsSupervisor(input.RequesterRole) {
 		return nil, ErrOnlyLeaderCanReview
 	}
 	if input.Reason == "" {
@@ -587,7 +632,7 @@ type ReassignInput struct {
 // waktu reassign ini juga, sama seperti reopen — supaya staf baru punya
 // waktu penuh untuk mengerjakan, bukan sisa waktu dari staf sebelumnya.
 func (s *TicketService) Reassign(ctx context.Context, input ReassignInput) (*model.Ticket, error) {
-	if input.RequesterRole != model.RoleLeader && input.RequesterRole != model.RoleAdmin {
+	if !model.IsSupervisor(input.RequesterRole) {
 		return nil, ErrOnlyLeaderCanReassign
 	}
 	if input.Reason == "" {
@@ -677,7 +722,7 @@ type ApproveInput struct {
 // normal yang sama seperti tiket yang dibuat staf/leader langsung:
 // assigned (kalau ditunjuk staf tertentu) atau unassigned.
 func (s *TicketService) Approve(ctx context.Context, input ApproveInput) (*model.Ticket, error) {
-	if input.Role != model.RoleLeader && input.Role != model.RoleAdmin {
+	if !model.IsSupervisor(input.Role) {
 		return nil, ErrOnlyLeaderCanApprove
 	}
 
@@ -723,7 +768,7 @@ func (s *TicketService) Approve(ctx context.Context, input ApproveInput) (*model
 			"Tiket \""+ticket.Title+"\" disetujui dan ditugaskan langsung kepadamu.",
 		)
 	} else {
-		staffList, err := s.userRepo.ListByRole(ctx, model.RoleStaffIT)
+		staffList, err := s.userRepo.ListByRoles(ctx, model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps)
 		if err == nil {
 			for _, staff := range staffList {
 				s.notifier.Notify(ctx, staff.ID, &ticket.ID,
@@ -755,7 +800,7 @@ type RejectInput struct {
 // dianggap final, dengan alasan penolakan tercatat sebagai komentar supaya
 // ada jejaknya, dan pelapor diberi tahu alasannya.
 func (s *TicketService) Reject(ctx context.Context, input RejectInput) (*model.Ticket, error) {
-	if input.Role != model.RoleLeader && input.Role != model.RoleAdmin {
+	if !model.IsSupervisor(input.Role) {
 		return nil, ErrOnlyLeaderCanApprove
 	}
 	if input.Reason == "" {
@@ -868,7 +913,7 @@ func (s *TicketService) notifySLARecipients(ctx context.Context, t model.Ticket,
 		return
 	case model.StatusUnassigned:
 		// Belum ada staf yang klaim sama sekali — ingatkan SEMUA staff_it.
-		staffList, err := s.userRepo.ListByRole(ctx, model.RoleStaffIT)
+		staffList, err := s.userRepo.ListByRoles(ctx, model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps)
 		if err == nil {
 			for _, staff := range staffList {
 				s.notifier.Notify(ctx, staff.ID, &t.ID, notifType, title, message)
@@ -906,7 +951,7 @@ var ErrCannotEditClosedTicket = errors.New("tiket yang sudah closed tidak bisa d
 // supaya siklus reminder mulai dari awal untuk deadline yang baru,
 // bukan memakai status reminder dari deadline lama.
 func (s *TicketService) UpdateDeadline(ctx context.Context, ticketID, userID string, role model.UserRole, newDeadline time.Time) (*model.Ticket, error) {
-	if role != model.RoleLeader && role != model.RoleAdmin {
+	if !model.IsSupervisor(role) {
 		return nil, ErrOnlyLeaderCanSetDeadline
 	}
 

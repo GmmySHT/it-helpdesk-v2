@@ -12,6 +12,10 @@ type TicketSignoff struct {
 	ID       string `json:"id"`
 	TicketID string `json:"ticket_id"`
 
+	// DocType: "analysis" (persetujuan analisa) atau "bast" (serah-terima).
+	DocType   string `json:"doc_type"`
+	DocNumber string `json:"doc_number,omitempty"`
+
 	FileURL  string `json:"file_url"`
 	FileName string `json:"file_name"`
 	FileType string `json:"file_type"` // "image" atau "pdf"

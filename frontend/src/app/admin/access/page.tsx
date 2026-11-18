@@ -23,10 +23,13 @@ import {
   getMyPermissions,
 } from "@/lib/api";
 
-const ROLES = ["user", "staff_it", "leader", "admin"] as const;
+const ROLES = ["pelapor", "it_support", "analyst", "programmer", "devops", "leader", "admin"] as const;
 const ROLE_LABEL: Record<string, string> = {
-  user: "Pelapor",
-  staff_it: "Staf IT",
+  pelapor: "Pelapor",
+  it_support: "IT Support",
+  analyst: "Analyst",
+  programmer: "Programmer",
+  devops: "DevOps",
   leader: "Leader",
   admin: "Admin",
 };

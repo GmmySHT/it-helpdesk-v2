@@ -186,7 +186,7 @@ func (h *KPIHandler) StaffKPIExport(w http.ResponseWriter, r *http.Request) {
 	cw.Write([]string{"KPI per Staf"})
 	cw.Write([]string{
 		"No", "Nama", "Role", "Departemen",
-		"Tiket Selesai", "Daily Task", "Total Item",
+		"Tiket Dibuat", "Tiket Dianalisa", "Tiket Selesai", "Daily Task", "Total Item",
 		"Rata-rata Penyelesaian Tiket (menit)",
 		"Rata-rata Durasi Daily Task (menit)",
 		"Rata-rata Respon Daily Task (menit)",
@@ -198,6 +198,8 @@ func (h *KPIHandler) StaffKPIExport(w http.ResponseWriter, r *http.Request) {
 			k.StaffName,
 			roleLabel(k.Role),
 			k.Department,
+			strconv.Itoa(k.TicketsCreated),
+			strconv.Itoa(k.TicketsAnalyzed),
 			strconv.Itoa(k.TicketsResolved),
 			strconv.Itoa(k.DailyTasks),
 			strconv.Itoa(k.TotalWorkItems),
@@ -224,17 +226,23 @@ func formatMinutes(v float64) string {
 }
 
 func roleLabel(role string) string {
-	switch role {
-	case "staff_it":
-		return "Staf IT"
-	case "leader":
+	switch model.UserRole(role) {
+	case model.RoleITSupport:
+		return "IT Support"
+	case model.RoleAnalyst:
+		return "Analyst"
+	case model.RoleProgrammer:
+		return "Programmer"
+	case model.RoleDevOps:
+		return "DevOps"
+	case model.RoleLeader:
 		return "Leader"
-	case "admin":
+	case model.RoleAdmin:
 		return "Admin"
-	case "user":
+	case model.RoleReporter:
 		return "Pelapor"
 	}
-	return role
+	return model.RoleLabel(model.UserRole(role))
 }
 
 // slugify dipakai untuk nama file unduhan. Hanya huruf/angka/hubung yang

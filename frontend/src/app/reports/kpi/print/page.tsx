@@ -34,10 +34,13 @@ const INSTITUTION_NAME =
   process.env.NEXT_PUBLIC_INSTITUTION_NAME || "Rumah Sakit — Unit IT / SIMRS";
 
 const ROLE_LABEL: Record<string, string> = {
-  staff_it: "Staf IT",
+  it_support: "IT Support",
+  analyst: "Analyst",
+  programmer: "Programmer",
+  devops: "DevOps",
   leader: "Leader",
   admin: "Admin",
-  user: "Pelapor",
+  pelapor: "Pelapor",
 };
 
 const PRIORITY_LABEL: Record<string, string> = {
@@ -45,6 +48,15 @@ const PRIORITY_LABEL: Record<string, string> = {
   medium: "Sedang",
   high: "Tinggi",
   urgent: "Mendesak",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  pending_approval: "Menunggu Persetujuan",
+  unassigned: "Belum Ditugaskan",
+  assigned: "Menunggu Diklaim",
+  claimed: "Sedang Dikerjakan",
+  resolved: "Menunggu Review",
+  closed: "Selesai",
 };
 
 function formatDate(iso?: string) {
@@ -267,6 +279,7 @@ function StaffSection({
 }) {
   const s = detail.staff;
   const tickets = detail.tickets || [];
+  const analyzed = detail.analyzed_tickets || [];
   const dailies = detail.daily_tasks || [];
 
   const periode =
@@ -329,6 +342,18 @@ function StaffSection({
             </td>
           </tr>
           <tr>
+            <td className="border border-neutral-300 px-3 py-1.5">Tiket dianalisa</td>
+            <td className="border border-neutral-300 px-3 py-1.5 font-semibold">
+              {s.tickets_analyzed ?? 0} tiket
+            </td>
+            <td className="border border-neutral-300 px-3 py-1.5">
+              Tiket dibuat / diteruskan
+            </td>
+            <td className="border border-neutral-300 px-3 py-1.5 font-semibold">
+              {s.tickets_created ?? 0} tiket
+            </td>
+          </tr>
+          <tr>
             <td className="border border-neutral-300 px-3 py-1.5">Daily task diselesaikan</td>
             <td className="border border-neutral-300 px-3 py-1.5 font-semibold">
               {s.daily_tasks} pekerjaan
@@ -378,6 +403,8 @@ function StaffSection({
               <th className="border border-neutral-300 px-2 py-1.5 text-left">Judul Pekerjaan</th>
               <th className="border border-neutral-300 px-2 py-1.5 text-left">Kategori</th>
               <th className="border border-neutral-300 px-2 py-1.5 text-left">Prioritas</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Dibuat Oleh</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Diedit Oleh</th>
               <th className="border border-neutral-300 px-2 py-1.5 text-left">Selesai</th>
               <th className="border border-neutral-300 px-2 py-1.5 text-right">Durasi</th>
               <th className="border border-neutral-300 px-2 py-1.5 text-center">SLA</th>
@@ -396,6 +423,12 @@ function StaffSection({
                   {PRIORITY_LABEL[t.priority] || t.priority}
                 </td>
                 <td className="border border-neutral-300 px-2 py-1.5">
+                  {t.created_by_name || "-"}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">
+                  {t.updated_by_name || "-"}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">
                   {formatDate(t.resolved_at)}
                 </td>
                 <td className="border border-neutral-300 px-2 py-1.5 text-right">
@@ -410,9 +443,59 @@ function StaffSection({
         </table>
       )}
 
+      {/* Rincian tiket yang dianalisa — untuk analyst yang tidak mengklaim
+          tiket, ini satu-satunya bukti kontribusinya di laporan. */}
+      <h2 className="mb-1.5 text-sm font-bold uppercase tracking-wide">
+        B. Rincian Tiket Dianalisa ({analyzed.length})
+      </h2>
+      {analyzed.length === 0 ? (
+        <p className="mb-5 border border-neutral-300 px-3 py-2 text-sm text-neutral-600">
+          Tidak ada tiket yang dianalisa pada periode ini.
+        </p>
+      ) : (
+        <table className="mb-5 w-full border-collapse text-[11px]">
+          <thead>
+            <tr className="bg-neutral-100">
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">No</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Kode</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Judul Pekerjaan</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Kategori</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Prioritas</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Status</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Dibuat Oleh</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Selesai</th>
+            </tr>
+          </thead>
+          <tbody>
+            {analyzed.map((t: KPITicketRow, i: number) => (
+              <tr key={`an-${t.ticket_code}-${i}`}>
+                <td className="border border-neutral-300 px-2 py-1.5">{i + 1}</td>
+                <td className="border border-neutral-300 px-2 py-1.5 font-[family-name:var(--font-display)]">
+                  {t.ticket_code}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">{t.title}</td>
+                <td className="border border-neutral-300 px-2 py-1.5">{t.category_name}</td>
+                <td className="border border-neutral-300 px-2 py-1.5">
+                  {PRIORITY_LABEL[t.priority] || t.priority}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">
+                  {STATUS_LABEL[t.status] || t.status}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">
+                  {t.created_by_name || "-"}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">
+                  {formatDate(t.resolved_at)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
       {/* Rincian daily task */}
       <h2 className="mb-1.5 text-sm font-bold uppercase tracking-wide">
-        B. Rincian Daily Task ({dailies.length})
+        C. Rincian Daily Task ({dailies.length})
       </h2>
       {dailies.length === 0 ? (
         <p className="mb-5 border border-neutral-300 px-3 py-2 text-sm text-neutral-600">

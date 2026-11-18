@@ -103,13 +103,16 @@ Uji manual di aplikasi:
 - [ ] Unggah file `.html`/`.exe` (walau diganti nama `.jpg`) sebagai gambar → ditolak.
 - [ ] Nonaktifkan sebuah akun lewat Manajemen User → sesi aktifnya terputus maksimal ±15 detik.
 - [ ] Matikan koneksi SIMRS → halaman Monitoring menampilkan banner, halaman lain normal.
-- [ ] Login sebagai `staff_it`, buka `/reports/kpi` → tidak ada dropdown staf, angka hanya miliknya. Coba `?staff_id=<id staf lain>` di URL → tetap data sendiri.
+- [ ] Login sebagai `it_support`/`analyst`/`programmer`/`devops`, buka `/reports/kpi` → tidak ada dropdown staf, angka hanya miliknya. Coba `?staff_id=<id staf lain>` di URL → tetap data sendiri.
 - [ ] Login sebagai `leader`/`admin` → dropdown staf muncul, pilih staf lain → kartu ringkasan & tabel ikut berubah.
-- [ ] Buka `/reports/kpi/print?staff_id=<staf>` sebagai `staff_it` → kop tetap nama sendiri.
+- [ ] Buka `/reports/kpi/print?staff_id=<staf>` sebagai staf teknis → kop tetap nama sendiri.
 - [ ] Tiket `closed` → tombol **Cetak BAST** muncul untuk staff/leader/admin, **tidak** muncul untuk `user`.
+- [ ] Migrasi 000036 terpasang: `SELECT DISTINCT role FROM users` → `pelapor`, `it_support`, `leader`, `admin` (mapping dari `user`/`staff_it`); `role_module_permissions` berisi 7 role termasuk `analyst`, `programmer`, `devops`.
+- [ ] Login `analyst` → `/me/permissions` → modul `ticketing` level `editor`; PATCH `/tickets/{id}` berhasil. Login `pelapor` → level `view`; PATCH ditolak 403.
+- [ ] Role baru bisa dibuat admin lewat Manajemen Akses tanpa mengubah schema DB.
 - [ ] Login sebagai user mana pun → menu profil di sidebar → `/profile` → ganti password dengan password lama benar → berhasil, auto logout, login ulang dengan password baru berhasil.
 - [ ] Ganti password dengan password lama **salah** → muncul pesan "password saat ini salah", bukan logout paksa.
-- [ ] Login `leader` → `/admin/users` → reset password akun `user` → berhasil. Coba reset akun `admin` → ditolak ("tidak punya hak untuk mengelola akun dengan role ini").
+- [ ] Login `leader` → `/admin/users` → reset password akun `pelapor` → berhasil. Coba reset akun `admin` → ditolak ("tidak punya hak untuk mengelola akun dengan role ini").
 - [ ] Setelah akun direset, login dengan password baru → halaman Profil menampilkan banner "baru direset oleh leader/admin".
 
 ## 8. Yang belum tercakup (tahap berikutnya)

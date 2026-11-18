@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { Package, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { isReporter, isSupervisor, isTechnicalStaff } from "@/lib/roles";
 import { useNotificationsContext } from "@/lib/notifications-context";
 import { Sidebar } from "@/components/sidebar";
 import {
@@ -137,7 +138,7 @@ export default function DashboardPage() {
           greeting="Halo"
           userName={user.name.split(" ")[0]}
           actions={[
-            ...(user.role === "staff_it" || user.role === "leader" || user.role === "admin"
+            ...(isTechnicalStaff(user.role) || isSupervisor(user.role)
               ? [{ label: "+ Pinjam Aset", href: "/asset/borrowings/new", variant: "primary" as const }]
               : []),
             { label: "+ Buat Tiket", href: "/tickets?create=1", variant: "primary" as const },
@@ -145,12 +146,12 @@ export default function DashboardPage() {
         />
         <div className="relative z-10 w-full px-6 py-12 sm:px-10">
 
-          {(user.role === "leader" || user.role === "admin") && <LeaderView />}
-          {user.role === "staff_it" && <StaffView />}
-          {user.role === "user" && <ReporterView />}
+          {isSupervisor(user.role) && <LeaderView />}
+          {isTechnicalStaff(user.role) && <StaffView />}
+          {isReporter(user.role) && <ReporterView />}
 
           {/* Ringkasan Aset IT untuk tim IT (staff_it/leader/admin) */}
-          {(user.role === "staff_it" || user.role === "leader" || user.role === "admin") && (
+          {(isTechnicalStaff(user.role) || isSupervisor(user.role)) && (
             <div className="mt-8">
               <AssetInfoSection />
             </div>

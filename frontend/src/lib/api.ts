@@ -5,7 +5,7 @@ export type User = {
   name: string;
   email: string;
   username?: string;
-  role: "user" | "staff_it" | "leader" | "admin";
+  role: "pelapor" | "it_support" | "analyst" | "programmer" | "devops" | "leader" | "admin" | (string & {});
   department?: string;
   is_active: boolean;
   // true kalau password direset leader/admin dan belum diganti sendiri
@@ -17,6 +17,8 @@ export type Category = {
   id: string;
   name: string;
   description?: string;
+  code?: string;
+  requires_analysis_approval?: boolean;
 };
 
 export type TicketStatus =
@@ -55,6 +57,13 @@ export type Ticket = {
   closed_by?: string;
   closed_by_name?: string;
   closed_at?: string;
+  updated_by?: string;
+  updated_by_name?: string;
+  updated_at?: string;
+  analysis_notes?: string;
+  analysis_by?: string;
+  analysis_by_name?: string;
+  analysis_approval_required?: boolean | null;
   created_at: string;
   // true kalau tiket sudah punya scan BAST bertanda tangan
   has_signoff?: boolean;
@@ -169,12 +178,29 @@ export function listCategories(token: string) {
   return request<Category[]>("/categories", {}, token);
 }
 
+export function updateCategoryApprovalGate(
+  token: string,
+  categoryId: string,
+  required: boolean
+) {
+  return request<Category>(`/categories/${categoryId}/approval-gate`, {
+    method: "PATCH",
+    body: JSON.stringify({ required }),
+  }, token);
+}
+
 export function listStaff(token: string) {
   return request<User[]>("/users/staff", {}, token);
 }
 
 export function listReporters(token: string) {
   return request<User[]>("/users/reporters", {}, token);
+}
+
+// Daftar koordinator IT / leader — dipakai halaman cetak untuk mengisi
+// baris Koordinator IT dari data sistem (bukan nama kosong).
+export function listCoordinators(token: string) {
+  return request<User[]>("/users/coordinators", {}, token);
 }
 
 export function listAllUsers(token: string) {
@@ -188,7 +214,7 @@ export function createUserByAdmin(
     email: string;
     username?: string;
     password: string;
-    role: "user" | "staff_it" | "leader" | "admin";
+    role: "pelapor" | "it_support" | "analyst" | "programmer" | "devops" | "leader" | "admin" | (string & {});
     department?: string;
   }
 ) {
@@ -209,7 +235,7 @@ export function updateUserByAdmin(
     name: string;
     email: string;
     username?: string;
-    role: "user" | "staff_it" | "leader" | "admin";
+    role: "pelapor" | "it_support" | "analyst" | "programmer" | "devops" | "leader" | "admin" | (string & {});
     department?: string;
   }
 ) {
@@ -281,6 +307,8 @@ export function resetUserPasswordByAdmin(
 export type TicketSignoff = {
   id: string;
   ticket_id: string;
+  doc_type?: "analysis" | "bast";
+  doc_number?: string;
   file_url: string;
   file_name: string;
   file_type: "image" | "pdf";
@@ -305,8 +333,34 @@ export function listTickets(
   return request<Ticket[]>(`/tickets${query}`, {}, token);
 }
 
-export function listSignoffs(token: string, ticketId: string) {
-  return request<TicketSignoff[]>(`/tickets/${ticketId}/signoffs`, {}, token);
+export function getDocumentNumber(
+  token: string,
+  ticketId: string,
+  type: "analysis" | "bast" = "bast"
+) {
+  return request<{ doc_number: string }>(
+    `/tickets/${ticketId}/document-number?type=${type}`,
+    {},
+    token
+  );
+}
+
+export function listSignoffs(token: string, ticketId: string, type?: "analysis" | "bast") {
+  const q = type ? `?type=${type}` : "";
+  return request<TicketSignoff[]>(`/tickets/${ticketId}/signoffs${q}`, {}, token);
+}
+
+// Simpan analisa/catatan staf IT + opsional override gate persetujuan.
+export function updateTicketAnalysis(
+  token: string,
+  ticketId: string,
+  input: { analysis_notes: string; analysis_approval_required?: boolean | null }
+) {
+  return request<Ticket>(`/tickets/${ticketId}/analysis`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }, token);
 }
 
 // fileUrl mengubah path relatif dari API ("/uploads/xxx.png") menjadi URL
@@ -326,10 +380,12 @@ export function uploadSignoff(
     signedByName: string;
     signedAt?: string;
     note?: string;
+    docType?: "analysis" | "bast";
   }
 ) {
   const formData = new FormData();
   formData.append("file", input.file);
+  if (input.docType) formData.append("doc_type", input.docType);
   formData.append("signed_by_name", input.signedByName);
   if (input.signedAt) formData.append("signed_at", input.signedAt);
   if (input.note) formData.append("note", input.note);
@@ -1315,6 +1371,18 @@ export type DailyTask = {
   created_by_name?: string;
   created_at: string;
   updated_at: string;
+  attachments?: DailyTaskAttachment[];
+};
+
+export type DailyTaskAttachment = {
+  id: string;
+  task_id: string;
+  file_url: string;
+  file_name: string;
+  file_type: "image" | "pdf";
+  file_size: number;
+  uploaded_by: string;
+  created_at: string;
 };
 
 export type DailyTaskInput = {
@@ -1367,6 +1435,25 @@ export function updateDailyTask(token: string, id: string, input: DailyTaskInput
   }, token);
 }
 
+export function uploadDailyTaskAttachments(token: string, id: string, files: File[]) {
+  const formData = new FormData();
+  files.forEach((f) => formData.append("files", f));
+  return requestFormData<DailyTaskAttachment[]>(`/daily-tasks/${id}/attachments`, formData, token);
+}
+
+export async function deleteDailyTaskAttachment(token: string, taskId: string, attachmentId: string) {
+  const res = await fetch(
+    `${API_BASE_URL}/daily-tasks/${taskId}/attachments/${attachmentId}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Gagal menghapus lampiran");
+  }
+  return { ok: true };
+}
+
 export function deleteDailyTask(token: string, id: string) {
   return request<{ message: string }>(`/daily-tasks/${id}`, { method: "DELETE" }, token);
 }
@@ -1377,6 +1464,8 @@ export type StaffKPI = {
   staff_name: string;
   role: string;
   department?: string;
+  tickets_created: number;
+  tickets_analyzed: number;
   tickets_resolved: number;
   avg_resolution_minutes: number;
   sla_compliant_count: number;
@@ -1426,6 +1515,8 @@ export type KPITicketRow = {
   category_name: string;
   priority: string;
   status: string;
+  created_by_name?: string;
+  updated_by_name?: string;
   claimed_at?: string;
   resolved_at?: string;
   minutes: number;
@@ -1449,6 +1540,7 @@ export type KPIDailyRow = {
 export type StaffKPIDetail = {
   staff: StaffKPI;
   tickets: KPITicketRow[];
+  analyzed_tickets: KPITicketRow[];
   daily_tasks: KPIDailyRow[];
 };
 

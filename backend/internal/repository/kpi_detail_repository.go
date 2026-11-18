@@ -18,6 +18,8 @@ type KPITicketRow struct {
 	CategoryName string     `json:"category_name"`
 	Priority     string     `json:"priority"`
 	Status       string     `json:"status"`
+	CreatedByName string    `json:"created_by_name,omitempty"`
+	UpdatedByName string    `json:"updated_by_name,omitempty"`
 	ClaimedAt    *time.Time `json:"claimed_at,omitempty"`
 	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
 	Minutes      float64    `json:"minutes"`
@@ -44,9 +46,12 @@ type KPIDailyRow struct {
 // StaffKPIDetail menggabungkan angka ringkas satu staf dengan rincian
 // pekerjaannya — dipakai halaman cetak /reports/kpi/print.
 type StaffKPIDetail struct {
-	Staff      StaffKPI       `json:"staff"`
-	Tickets    []KPITicketRow `json:"tickets"`
-	DailyTasks []KPIDailyRow  `json:"daily_tasks"`
+	Staff           StaffKPI       `json:"staff"`
+	Tickets         []KPITicketRow `json:"tickets"`
+	// AnalyzedTickets = rincian tiket yang dianalisa staf ini. Untuk analyst
+	// yang tidak mengklaim tiket, ini satu-satunya bukti kontribusinya.
+	AnalyzedTickets []KPITicketRow `json:"analyzed_tickets"`
+	DailyTasks      []KPIDailyRow  `json:"daily_tasks"`
 }
 
 // GetStaffKPIDetail mengembalikan ringkasan + rincian pekerjaan per staf.
@@ -65,8 +70,9 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 	for _, s := range summary {
 		detail := StaffKPIDetail{
 			Staff:      s,
-			Tickets:    []KPITicketRow{},
-			DailyTasks: []KPIDailyRow{},
+			Tickets:         []KPITicketRow{},
+			AnalyzedTickets: []KPITicketRow{},
+			DailyTasks:      []KPIDailyRow{},
 		}
 
 		tRows, err := r.db.Query(ctx, `
@@ -76,6 +82,8 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 				COALESCE(c.name, '-'),
 				t.priority::text,
 				t.status::text,
+				COALESCE(creator.name, '-'),
+				COALESCE(updater.name, '-'),
 				t.claimed_at,
 				t.last_resolved_at,
 				COALESCE(EXTRACT(EPOCH FROM (t.last_resolved_at - t.claimed_at)) / 60, 0),
@@ -86,6 +94,8 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 			FROM tickets t
 			LEFT JOIN categories c ON c.id = t.category_id
 			LEFT JOIN sla_rules sr ON sr.category_id = t.category_id AND sr.priority = t.priority
+			LEFT JOIN users creator ON creator.id = t.created_by
+			LEFT JOIN users updater ON updater.id = t.updated_by
 			WHERE t.claimed_by = $1::uuid
 				AND t.status IN ('resolved', 'closed')
 				AND t.claimed_at IS NOT NULL
@@ -102,6 +112,7 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 			var tr KPITicketRow
 			if err := tRows.Scan(
 				&tr.TicketCode, &tr.Title, &tr.CategoryName, &tr.Priority, &tr.Status,
+				&tr.CreatedByName, &tr.UpdatedByName,
 				&tr.ClaimedAt, &tr.ResolvedAt, &tr.Minutes, &tr.SLACompliant,
 			); err != nil {
 				tRows.Close()
@@ -111,6 +122,53 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 		}
 		tRows.Close()
 		if err := tRows.Err(); err != nil {
+			return nil, err
+		}
+
+		aRows, err := r.db.Query(ctx, `
+			SELECT
+				COALESCE(t.ticket_code, t.id::text),
+				t.title,
+				COALESCE(c.name, '-'),
+				t.priority::text,
+				t.status::text,
+				COALESCE(creator.name, '-'),
+				COALESCE(updater.name, '-'),
+				t.claimed_at,
+				t.last_resolved_at,
+				COALESCE(EXTRACT(EPOCH FROM (t.last_resolved_at - t.claimed_at)) / 60, 0),
+				COALESCE(
+					t.last_resolved_at <= t.claimed_at + (sr.resolution_time_minutes || ' minutes')::interval,
+					false
+				)
+			FROM tickets t
+			LEFT JOIN categories c ON c.id = t.category_id
+			LEFT JOIN sla_rules sr ON sr.category_id = t.category_id AND sr.priority = t.priority
+			LEFT JOIN users creator ON creator.id = t.created_by
+			LEFT JOIN users updater ON updater.id = t.updated_by
+			WHERE t.analysis_by = $1::uuid
+				AND t.deleted_at IS NULL
+				AND t.created_at >= COALESCE($2, '-infinity'::timestamptz)
+				AND t.created_at <= COALESCE($3, 'infinity'::timestamptz)
+			ORDER BY t.created_at ASC
+		`, s.StaffID, from, to)
+		if err != nil {
+			return nil, err
+		}
+		for aRows.Next() {
+			var tr KPITicketRow
+			if err := aRows.Scan(
+				&tr.TicketCode, &tr.Title, &tr.CategoryName, &tr.Priority, &tr.Status,
+				&tr.CreatedByName, &tr.UpdatedByName,
+				&tr.ClaimedAt, &tr.ResolvedAt, &tr.Minutes, &tr.SLACompliant,
+			); err != nil {
+				aRows.Close()
+				return nil, err
+			}
+			detail.AnalyzedTickets = append(detail.AnalyzedTickets, tr)
+		}
+		aRows.Close()
+		if err := aRows.Err(); err != nil {
 			return nil, err
 		}
 

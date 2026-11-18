@@ -32,6 +32,9 @@ type DailyTask struct {
 	CreatedByName string `json:"created_by_name,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+
+	// Lampiran opsional (0..5 file). Diisi endpoint Get/List.
+	Attachments []DailyTaskAttachment `json:"attachments"`
 }
 
 // Unit dipakai untuk dropdown Unit pada form daily task.

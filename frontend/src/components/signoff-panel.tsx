@@ -33,6 +33,9 @@ type Props = {
   // Dia tidak boleh menerbitkan BAST sendiri maupun mengunggah scan, karena
   // dokumen itu justru bukti yang harus dibuat oleh pihak IT.
   canUpload: boolean;
+  // Jenis dokumen: "analysis" (persetujuan analisa) atau "bast" (serah-terima).
+  docType?: "analysis" | "bast";
+  title?: string;
 };
 
 const inputClass =
@@ -62,6 +65,8 @@ export function SignoffPanel({
   reporterName,
   canDelete,
   canUpload,
+  docType = "bast",
+  title,
 }: Props) {
   const [docs, setDocs] = useState<TicketSignoff[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +77,9 @@ export function SignoffPanel({
   // aturan UI project: semua dialog harus bergaya sendiri.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  const isAnalysis = docType === "analysis";
+  // Upload scan analysis boleh kapan saja (sebelum klaim); BAST baru setelah closed.
+  const canUploadNow = canUpload && (isAnalysis || isClosed);
   const [signedByName, setSignedByName] = useState(reporterName || "");
   const [signedAt, setSignedAt] = useState("");
   const [note, setNote] = useState("");
@@ -79,7 +87,7 @@ export function SignoffPanel({
 
   async function load() {
     try {
-      const data = await listSignoffs(token, ticketId);
+      const data = await listSignoffs(token, ticketId, docType);
       setDocs(data || []);
     } catch {
       // Panel ini pelengkap; kalau gagal dimuat jangan ganggu tampilan tiket.
@@ -118,6 +126,7 @@ export function SignoffPanel({
         signedByName: signedByName.trim(),
         signedAt: signedAt || undefined,
         note: note.trim() || undefined,
+        docType,
       });
       if (fileRef.current) fileRef.current.value = "";
       setNote("");
@@ -146,14 +155,15 @@ export function SignoffPanel({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
-            Bukti Serah-Terima
+            {title || (isAnalysis ? "Persetujuan Analisa" : "Bukti Serah-Terima")}
           </p>
           <p className="mt-1 text-[11px] text-text-muted/80">
-            Scan BAST yang sudah ditandatangani pelapor — bukti resmi bahwa
-            pekerjaan dinyatakan sesuai.
+            {isAnalysis
+              ? "Scan dokumen analisa yang sudah ditandatangani pelapor — wajib sebelum tiket dapat diklaim."
+              : "Scan BAST yang sudah ditandatangani pelapor — bukti resmi bahwa pekerjaan dinyatakan sesuai."}
           </p>
         </div>
-        {isClosed && canUpload && (
+        {canUploadNow && (
           <button
             onClick={() => setShowForm((v) => !v)}
             className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-all duration-150 hover:bg-accent/20"
@@ -163,7 +173,7 @@ export function SignoffPanel({
         )}
       </div>
 
-      {!isClosed && canUpload && (
+      {!isClosed && !isAnalysis && canUpload && (
         <p className="rounded-md border border-amber/25 bg-amber/5 px-3 py-2 text-xs text-amber">
           Tombol cetak BAST &amp; unggah scan aktif setelah tiket berstatus
           Selesai (closed).
@@ -176,7 +186,7 @@ export function SignoffPanel({
         </p>
       )}
 
-      {showForm && isClosed && canUpload && (
+      {showForm && canUploadNow && (
         <form
           onSubmit={handleUpload}
           className="mb-4 rounded-md border border-border-subtle bg-card-hover p-3"
@@ -266,6 +276,9 @@ export function SignoffPanel({
                 >
                   {doc.file_name}
                 </a>
+                {doc.doc_number && (
+                  <p className="text-[11px] font-medium text-accent">{doc.doc_number}</p>
+                )}
                 <p className="mt-0.5 text-[11px] text-text-muted">
                   Ditandatangani: {doc.signed_by_name}
                   {doc.signed_at ? ` · ${formatDateTime(doc.signed_at)}` : ""}

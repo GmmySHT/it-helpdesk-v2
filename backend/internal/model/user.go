@@ -2,16 +2,6 @@ package model
 
 import "time"
 
-// UserRole merepresentasikan peran pengguna sesuai ENUM user_role di database.
-type UserRole string
-
-const (
-	RoleUser    UserRole = "user"
-	RoleStaffIT UserRole = "staff_it"
-	RoleLeader  UserRole = "leader"
-	RoleAdmin   UserRole = "admin"
-)
-
 // User merepresentasikan baris pada tabel users.
 // PasswordHash sengaja tidak diberi tag json agar tidak pernah
 // ikut ter-serialize dan bocor ke response API.

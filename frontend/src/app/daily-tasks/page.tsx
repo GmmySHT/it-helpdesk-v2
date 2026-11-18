@@ -16,11 +16,12 @@
  * hasilnya sebelum menyimpan.
  */
 
-import { useEffect, useMemo, useState, FormEvent } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/page-header";
 import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/lib/auth-context";
+import { isReporter } from "@/lib/roles";
 import {
   DailyTask,
   DailyTaskInput,
@@ -30,8 +31,11 @@ import {
   createDailyTask,
   updateDailyTask,
   deleteDailyTask,
+  DailyTaskAttachment,
+  uploadDailyTaskAttachments,
 } from "@/lib/api";
-import { Pencil, Trash2, Plus, X, Save, Search, Clock } from "lucide-react";
+import DailyTaskAttachments from "@/components/daily-task-attachments";
+import { Pencil, Trash2, Plus, X, Save, Search, Clock, Paperclip } from "lucide-react";
 
 const inputClass =
   "w-full rounded-md border border-border bg-card-hover px-3.5 py-2.5 text-sm text-text-primary placeholder-text-muted outline-none transition-all duration-150 focus:border-accent";
@@ -133,6 +137,11 @@ export default function DailyTasksPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // File lampiran untuk task baru: diunggah setelah task berhasil dibuat.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [expandedAttId, setExpandedAttId] = useState<string | null>(null);
+  // Task yang sedang dibuka lampirannya di popup (turunan dari id + daftar task).
+  const attTask = tasks.find((t) => t.id === expandedAttId) || null;
 
   const isLeaderOrAdmin = user?.role === "leader" || user?.role === "admin";
 
@@ -141,7 +150,7 @@ export default function DailyTasksPage() {
   }, [isLoading, user, router]);
 
   useEffect(() => {
-    if (!isLoading && user && user.role === "user") router.push("/dashboard");
+    if (!isLoading && user && isReporter(user.role)) router.push("/dashboard");
   }, [isLoading, user, router]);
 
   // Unit hanya perlu diambil sekali — daftarnya tidak berubah saat filter
@@ -262,11 +271,27 @@ export default function DailyTasksPage() {
         start_at: form.start_at || null,
         end_at: form.end_at || null,
       };
+      let taskId = editingId;
       if (editingId) {
         await updateDailyTask(token, editingId, payload);
       } else {
-        await createDailyTask(token, payload);
+        const created = await createDailyTask(token, payload);
+        taskId = created.id;
       }
+      // Lampiran opsional: diunggah setelah task ada ID-nya. Kegagalan
+      // upload tidak membatalkan task yang sudah tersimpan.
+      if (taskId && pendingFiles.length > 0) {
+        try {
+          await uploadDailyTaskAttachments(token, taskId, pendingFiles);
+        } catch (err) {
+          setFormError(
+            `Task tersimpan, tetapi lampiran gagal: ${
+              err instanceof Error ? err.message : "unknown error"
+            }`
+          );
+        }
+      }
+      setPendingFiles([]);
       setShowForm(false);
       setEditingId(null);
       setForm(emptyForm());
@@ -512,6 +537,59 @@ export default function DailyTasksPage() {
                 </div>
               </div>
 
+              {/* Lampiran opsional untuk task BARU. File ditahan dulu, lalu
+                  diunggah setelah task memiliki ID (lihat handleSubmit). */}
+              {!editingId && (
+                <div className="mt-4">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-muted">
+                    Lampiran Bukti <span className="normal-case">(Opsional)</span>
+                  </p>
+                  <label className="upload-dropzone">
+                    <Paperclip size={18} className="text-text-muted" />
+                    <span className="text-xs text-text-secondary">Klik untuk pilih file</span>
+                    <span className="text-[10px] text-text-muted">
+                      PDF, JPG, PNG, WEBP · maks 5 MB/file · maks 5 file
+                    </span>
+                    <input
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        const accepted = files.filter(
+                          (f) => f.size <= 5 * 1024 * 1024
+                        );
+                        setPendingFiles((prev) => [...prev, ...accepted].slice(0, 5));
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {pendingFiles.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {pendingFiles.map((f, i) => (
+                        <li
+                          key={`${f.name}-${i}`}
+                          className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-1.5 text-xs"
+                        >
+                          <span className="truncate">{f.name}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingFiles((prev) => prev.filter((_, j) => j !== i))
+                            }
+                            className="text-text-muted hover:text-red-500"
+                            aria-label={`Hapus ${f.name}`}
+                          >
+                            <X size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               {formError && (
                 <p className="mt-3 rounded-md border border-red/30 bg-red/10 px-3 py-2 text-xs text-red">
                   {formError}
@@ -576,7 +654,8 @@ export default function DailyTasksPage() {
                   )}
                   {!loading &&
                     visible.map((t) => (
-                      <tr key={t.id} className="border-b border-border-subtle last:border-0 hover:bg-card-hover/50">
+                      <Fragment key={t.id}>
+                      <tr className="border-b border-border-subtle last:border-0 hover:bg-card-hover/50">
                         <td className="whitespace-nowrap px-3 py-2.5 text-text-secondary">{formatDate(t.task_date)}</td>
                         <td className="px-3 py-2.5">
                           <p className="font-medium text-text-primary">{t.reporter_name}</p>
@@ -601,6 +680,26 @@ export default function DailyTasksPage() {
                           <td className="whitespace-nowrap px-3 py-2.5 text-text-muted">{t.created_by_name || "—"}</td>
                         )}
                         <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                          {/* Semah yang berhak melihat task boleh melihat lampiran;
+                              tapi hanya PEMILIK yang boleh menambah/menghapus. */}
+                          <button
+                            onClick={() =>
+                              setExpandedAttId((cur) => (cur === t.id ? null : t.id))
+                            }
+                            title="Lampiran"
+                            className={`mr-1 rounded-md p-1.5 transition-colors ${
+                              (t.attachments || []).length > 0
+                                ? "text-accent hover:bg-accent/10"
+                                : "text-text-muted hover:bg-card-hover"
+                            }`}
+                          >
+                            <Paperclip className="h-3.5 w-3.5" />
+                            {(t.attachments || []).length > 0 && (
+                              <span className="ml-0.5 text-[10px]">
+                                {t.attachments?.length}
+                              </span>
+                            )}
+                          </button>
                           {/* Staf hanya boleh mengubah catatannya sendiri;
                               leader/admin boleh mengubah semua. */}
                           {(isLeaderOrAdmin || t.created_by === user.id) && (
@@ -640,6 +739,7 @@ export default function DailyTasksPage() {
                           )}
                         </td>
                       </tr>
+                      </Fragment>
                     ))}
                 </tbody>
               </table>
@@ -650,6 +750,52 @@ export default function DailyTasksPage() {
             Durasi dan respon time dihitung otomatis oleh sistem dari jam yang diisi
             — tidak perlu diisi manual.
           </p>
+          {/* Popup lampiran: klik ikon paperclip di tabel membuka modal ini. */}
+          {attTask && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Lampiran Daily Task"
+              onClick={() => setExpandedAttId(null)}
+            >
+              <div
+                className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-border bg-card p-5 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="font-[family-name:var(--font-display)] text-base font-semibold text-text-primary">
+                      Lampiran Bukti
+                    </h2>
+                    <p className="mt-0.5 text-xs text-text-muted line-clamp-2">
+                      {attTask.issue || attTask.detail || "Daily Task"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setExpandedAttId(null)}
+                    title="Tutup"
+                    className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-card-hover hover:text-text-primary"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <DailyTaskAttachments
+                  token={token || ""}
+                  taskId={attTask.id}
+                  attachments={attTask.attachments || []}
+                  canEdit={attTask.created_by === user.id}
+                  onChanged={(items) =>
+                    setTasks((prev) =>
+                      prev.map((x) =>
+                        x.id === attTask.id ? { ...x, attachments: items } : x
+                      )
+                    )
+                  }
+                />
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>

@@ -16,18 +16,24 @@ import {
 } from "@/lib/api";
 import { Pencil, Trash2, KeyRound, Eye, EyeOff, Loader2 } from "lucide-react";
 
-type Role = "user" | "staff_it" | "leader" | "admin";
+type Role = "pelapor" | "it_support" | "analyst" | "programmer" | "devops" | "leader" | "admin" | (string & {});
 
 const ROLE_LABEL: Record<string, string> = {
-  user: "Pelapor",
-  staff_it: "Staf IT",
+  pelapor: "Pelapor",
+  it_support: "IT Support",
+  analyst: "Analyst",
+  programmer: "Programmer",
+  devops: "DevOps",
   leader: "Leader",
   admin: "Administrator",
 };
 
 const ROLE_BADGE: Record<string, string> = {
   user: "bg-text-muted/10 text-text-muted border-text-muted/30",
-  staff_it: "bg-blue/10 text-blue border-blue/30",
+  it_support: "bg-blue/10 text-blue border-blue/30",
+  analyst: "bg-violet/10 text-violet border-violet/30",
+  programmer: "bg-cyan/10 text-cyan border-cyan/30",
+  devops: "bg-amber/10 text-amber border-amber/30",
   leader: "bg-amber/10 text-amber border-amber/30",
   admin: "bg-accent/10 text-accent border-accent/30",
 };
@@ -63,7 +69,7 @@ const emptyForm: FormState = {
   email: "",
   username: "",
   password: "",
-  role: "user",
+  role: "pelapor",
   department: "",
 };
 
@@ -98,7 +104,7 @@ export default function UserManagementPage() {
   // togglingUserId mencatat user mana yang sedang toggle statusnya
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
-  const myRole = (user?.role as Role) || "user";
+  const myRole = (user?.role as Role) || "pelapor";
   const isAdmin = myRole === "admin";
   const isLeaderOrAdmin = myRole === "leader" || myRole === "admin";
 
@@ -369,8 +375,11 @@ export default function UserManagementPage() {
                     }
                     className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}
                   >
-                    <option value="user">Pelapor</option>
-                    <option value="staff_it">Staf IT</option>
+                    <option value="pelapor">Pelapor</option>
+                    <option value="it_support">IT Support</option>
+                    <option value="analyst">Analyst</option>
+                    <option value="programmer">Programmer</option>
+                    <option value="devops">DevOps</option>
                     {/* Leader/Admin cuma boleh ditetapkan oleh admin — konsisten
                         dengan validasi yang sama persis di backend. */}
                     {isAdmin && <option value="leader">Leader</option>}

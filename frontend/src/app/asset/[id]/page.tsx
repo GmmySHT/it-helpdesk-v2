@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { isSupervisor } from "@/lib/roles";
 import { useRouter, useParams } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import PageHeader from "@/components/page-header";
@@ -38,7 +39,7 @@ export default function AssetDetailPage() {
 
   const [canManage, setCanManage] = useState(false);
   // canDelete: staff_it/leader/admin boleh hapus, user/pelapor tidak
-  const canDelete = ["staff_it", "leader", "admin"].includes(user?.role ?? "");
+  const canDelete = isSupervisor(user?.role);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 

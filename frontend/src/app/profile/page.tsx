@@ -31,8 +31,11 @@ const labelClass =
   "mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-text-muted";
 
 const ROLE_LABEL: Record<string, string> = {
-  user: "Pelapor",
-  staff_it: "Staf IT",
+  pelapor: "Pelapor",
+  it_support: "IT Support",
+  analyst: "Analyst",
+  programmer: "Programmer",
+  devops: "DevOps",
   leader: "Leader",
   admin: "Administrator",
 };

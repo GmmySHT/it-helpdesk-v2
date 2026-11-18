@@ -378,6 +378,39 @@ select option:checked {
   animation: liquid-shimmer 1.8s linear infinite;
 }
 
+/* Area unggah lampiran Daily Task (klik / drag-and-drop). */
+.upload-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 96px;
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  background: var(--card-hover);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.upload-dropzone:hover,
+.upload-dropzone.is-dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--card-hover));
+}
+.upload-dropzone.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.attachment-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 /* Scrollbar tipis untuk panel dashboard */
 .slim-scroll {
   scrollbar-gutter: stable; /* ruang scrollbar dicadangkan, kolom tidak bergeser */

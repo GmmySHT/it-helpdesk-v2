@@ -43,10 +43,13 @@ function formatMinutes(v?: number | null) {
 }
 
 const ROLE_LABEL: Record<string, string> = {
-  staff_it: "Staf IT",
+  it_support: "IT Support",
+  analyst: "Analyst",
+  programmer: "Programmer",
+  devops: "DevOps",
   leader: "Leader",
   admin: "Admin",
-  user: "Pelapor",
+  pelapor: "Pelapor",
 };
 
 export default function KPIReportPage() {
@@ -314,6 +317,8 @@ export default function KPIReportPage() {
                     <th className="px-3 py-2.5">#</th>
                     <th className="px-3 py-2.5">Nama</th>
                     <th className="px-3 py-2.5">Role</th>
+                    <th className="px-3 py-2.5">Tiket Dibuat</th>
+                    <th className="px-3 py-2.5">Tiket Dianalisa</th>
                     <th className="px-3 py-2.5">Tiket Selesai</th>
                     <th className="px-3 py-2.5">Daily Task</th>
                     <th className="px-3 py-2.5">Total Item</th>
@@ -328,14 +333,14 @@ export default function KPIReportPage() {
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={12} className="px-3 py-10 text-center text-text-muted">
+                      <td colSpan={13} className="px-3 py-10 text-center text-text-muted">
                         <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                       </td>
                     </tr>
                   )}
                   {!loading && visibleStaff.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="px-3 py-10 text-center text-text-muted">
+                      <td colSpan={13} className="px-3 py-10 text-center text-text-muted">
                         Belum ada pekerjaan tercatat pada periode ini.
                       </td>
                     </tr>
@@ -351,6 +356,8 @@ export default function KPIReportPage() {
                         <td className="whitespace-nowrap px-3 py-2.5 text-text-secondary">
                           {ROLE_LABEL[s.role] || s.role}
                         </td>
+                        <td className="px-3 py-2.5 text-text-secondary">{s.tickets_created}</td>
+                        <td className="px-3 py-2.5 text-text-secondary">{s.tickets_analyzed ?? 0}</td>
                         <td className="px-3 py-2.5 text-text-secondary">{s.tickets_resolved}</td>
                         <td className="px-3 py-2.5 text-text-secondary">{s.daily_tasks}</td>
                         <td className="px-3 py-2.5 font-medium text-text-primary">{s.total_work_items}</td>

@@ -30,6 +30,7 @@ Sistem helpdesk IT internal dan manajemen aset berbasis web yang dirancang, diar
 - 📡 **Monitoring SIMRS** — dashboard pendapatan & kunjungan pasien real-time
 - 🔑 **Profil & Kata Sandi** — user ganti password sendiri (verifikasi password lama), leader/admin reset password akun lain sesuai hierarki role; sesi lama otomatis berakhir
 - 🔐 **RBAC** — hak akses per role dan per user, bisa diubah tanpa redeploy
+- 👥 **Role dinamis** — `pelapor`, `it_support`, `analyst`, `programmer`, `devops`, `leader`, `admin`; admin bisa menambah role baru lewat Manajemen Akses tanpa deploy. Staf teknis + leader/admin bisa mengedit detail tiket.
 - 🔔 **Notifikasi Real-time** — WebSocket push ke semua user terkait
 - 🎨 **Dark/Light Mode** — tema elegan dengan animated background
 
@@ -77,12 +78,12 @@ Butuh `backend/.env` (lihat `backend/.env.example`): `DATABASE_URL`, `JWT_SECRET
 
 | Halaman | URL | Keterangan |
 |---|---|---|
-| BAST tiket | `/tickets/{id}/print` | Hanya untuk tiket `closed`; tombol cetak tidak muncul untuk role `user` |
+| BAST tiket | `/tickets/{id}/print` | Hanya untuk tiket `closed`; tombol cetak tidak muncul untuk role `pelapor` |
 | Laporan KPI staf | `/reports/kpi/print` | Kop laporan, identitas staf, ringkasan, rincian tiket + daily task; `window.print()` → PDF |
 
 ## Endpoint Laporan & KPI
 
-Semua menerima `?from=YYYY-MM-DD&to=YYYY-MM-DD`. Endpoint ber-`staff_id` **dipaksa ke user yang login** bila role = `staff_it`.
+Semua menerima `?from=YYYY-MM-DD&to=YYYY-MM-DD`. Endpoint ber-`staff_id` **dipaksa ke user yang login** bila role staf teknis (`it_support`/`analyst`/`programmer`/`devops`).
 
 | Endpoint | Fungsi |
 |---|---|

@@ -14,6 +14,17 @@ var ErrUserNotFound = errors.New("user tidak ditemukan")
 var ErrEmailAlreadyExists = errors.New("email sudah terdaftar")
 var ErrUsernameAlreadyExists = errors.New("username sudah dipakai")
 
+// RoleExists mengecek apakah role terdaftar di matriks izin (role_module_permissions).
+// Dipakai supaya admin bisa membuat role BARU lewat Manajemen Akses lalu langsung
+// menggunakannya di Manajemen User tanpa deploy ulang.
+func (r *UserRepository) RoleExists(ctx context.Context, role string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM role_module_permissions WHERE role = $1)`, role,
+	).Scan(&exists)
+	return exists, err
+}
+
 // UserRepository menangani seluruh akses data ke tabel users.
 // Dipisah dari service supaya query SQL tidak bercampur dengan logika bisnis
 // (validasi, hashing password, dsb).

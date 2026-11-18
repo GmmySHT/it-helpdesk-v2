@@ -44,6 +44,16 @@ type Ticket struct {
 	CreatedBy     string `json:"created_by"`
 	CreatedByName string `json:"created_by_name,omitempty"`
 
+	UpdatedBy     *string    `json:"updated_by,omitempty"`
+	UpdatedByName *string    `json:"updated_by_name,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+
+	// Analisa/catatan staf IT + gate persetujuan sebelum klaim.
+	AnalysisNotes           string  `json:"analysis_notes"`
+	AnalysisBy              *string `json:"analysis_by,omitempty"`
+	AnalysisByName          *string `json:"analysis_by_name,omitempty"`
+	AnalysisApprovalRequired *bool  `json:"analysis_approval_required,omitempty"`
+
 	CreatedFor     *string `json:"created_for,omitempty"`
 	CreatedForName *string `json:"created_for_name,omitempty"`
 

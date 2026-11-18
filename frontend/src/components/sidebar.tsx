@@ -14,7 +14,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useTheme } from "@/lib/theme-context";
 import { getMyPermissions, EffectivePermission } from "@/lib/api";
 
-type Role = "user" | "staff_it" | "leader" | "admin";
+type Role = "pelapor" | "it_support" | "analyst" | "programmer" | "devops" | "leader" | "admin" | (string & {});
 
 type NavChild = {
   label: string;
@@ -54,7 +54,7 @@ const NAV_ITEMS: NavItem[] = [
     href: "/daily-tasks",
     icon: "task",
     group: "Operasional",
-    visibleForRoles: ["staff_it", "leader", "admin"],
+    visibleForRoles: ["it_support", "analyst", "programmer", "devops", "leader", "admin"],
   },
   {
     label: "Aset IT",
@@ -67,19 +67,19 @@ const NAV_ITEMS: NavItem[] = [
         label: "Pinjam Aset",
         href: "/asset/borrowings/new",
         icon: "plus",
-        visibleForRoles: ["staff_it", "leader", "admin"],
+        visibleForRoles: ["it_support", "analyst", "programmer", "devops", "leader", "admin"],
       },
       {
         label: "Peminjaman",
         href: "/asset/borrowings",
         icon: "list",
-        visibleForRoles: ["staff_it", "leader", "admin"],
+        visibleForRoles: ["it_support", "analyst", "programmer", "devops", "leader", "admin"],
       },
       {
         label: "Data Aset",
         href: "/asset",
         icon: "box",
-        visibleForRoles: ["staff_it", "leader", "admin"],
+        visibleForRoles: ["it_support", "analyst", "programmer", "devops", "leader", "admin"],
       },
       // Pelapor hanya melihat riwayat miliknya; karena cuma satu submenu
       // yang terlihat, otomatis ditampilkan sebagai link tunggal.
@@ -87,7 +87,7 @@ const NAV_ITEMS: NavItem[] = [
         label: "Riwayat Peminjaman",
         href: "/asset/borrowings",
         icon: "list",
-        visibleForRoles: ["user"],
+        visibleForRoles: ["pelapor"],
       },
     ],
   },
@@ -102,6 +102,13 @@ const NAV_ITEMS: NavItem[] = [
     label: "Manajemen User",
     href: "/admin/users",
     icon: "users",
+    group: "Administrasi",
+    visibleForRoles: ["leader", "admin"],
+  },
+  {
+    label: "Pengaturan Kategori",
+    href: "/admin/categories",
+    icon: "tag",
     group: "Administrasi",
     visibleForRoles: ["leader", "admin"],
   },
@@ -122,8 +129,11 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const ROLE_LABEL: Record<string, string> = {
-  user: "Pelapor",
-  staff_it: "Staf IT",
+  pelapor: "Pelapor",
+  it_support: "IT Support",
+  analyst: "Analyst",
+  programmer: "Programmer",
+  devops: "DevOps",
   leader: "Leader",
   admin: "Administrator",
 };
@@ -151,6 +161,7 @@ const ICONS = {
   right: '<path d="m13 17 5-5-5-5M6 17l5-5-5-5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  tag: '<path d="M20.6 13.6 12 22.2 2 12.2V3h9.2l9.4 9.4a1.5 1.5 0 0 1 0 2.2z"/><circle cx="7" cy="7" r="1.4"/>',
 } as const;
 
 type IconName = keyof typeof ICONS;

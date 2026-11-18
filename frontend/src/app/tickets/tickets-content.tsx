@@ -4,6 +4,7 @@ import { useEffect, useState, FormEvent, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { isReporter, isSupervisor } from "@/lib/roles";
 import { useNotificationsContext } from "@/lib/notifications-context";
 import { Sidebar } from "@/components/sidebar";
 import PageHeader from "@/components/page-header";
@@ -95,7 +96,10 @@ export function TicketsContent() {
   const [deadline, setDeadline] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isLeaderOrAdmin = user?.role === "leader" || user?.role === "admin";
+  const isLeaderOrAdmin = isSupervisor(user?.role);
+  // Analyst boleh membuat tiket persis seperti leader/admin: pilih pelapor,
+  // staf penerima, dan deadline. (Backend juga sudah mengizinkan via canManageTicket.)
+  const isFullTicketForm = isLeaderOrAdmin || user?.role === "analyst";
 
   useEffect(() => {
     if (!isLoading && !user) router.push("/login");
@@ -296,7 +300,7 @@ export function TicketsContent() {
               </p>
             </div>
 
-            {isLeaderOrAdmin && (
+            {isFullTicketForm && (
               <div className="mb-5">
                 <label className={labelClass}>
                   Buat untuk (atas permintaan user, opsional)
@@ -307,8 +311,8 @@ export function TicketsContent() {
                   className={inputClass}
                 >
                   <option value="">-- Untuk diri sendiri --</option>
-                  {users
-                    .filter((u) => u.role === "user" && u.id !== user?.id)
+                  {reporters
+                    .filter((u) => u.id !== user?.id)
                     .map((u) => (
                       <option key={u.id} value={u.id}>
                         {u.name}
@@ -321,7 +325,7 @@ export function TicketsContent() {
               </div>
             )}
 
-            {isLeaderOrAdmin && (
+            {isFullTicketForm && (
               <div className="mb-5">
                 <label className={labelClass}>
                   Assign langsung ke staf (opsional)
@@ -341,7 +345,7 @@ export function TicketsContent() {
               </div>
             )}
 
-            {isLeaderOrAdmin && (
+            {isFullTicketForm && (
               <div className="mb-3">
                 <label className={labelClass}>Deadline (opsional)</label>
                 <input
