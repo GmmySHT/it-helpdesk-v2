@@ -39,6 +39,56 @@ func (h *DailyTaskHandler) fillAttachments(r *http.Request, tasks []model.DailyT
 	return nil
 }
 
+// CRUD Unit (departemen) — hanya leader/admin lewat route yang membatasi role.
+func (h *DailyTaskHandler) CreateUnit(w http.ResponseWriter, r *http.Request) {
+	var body struct { Name string `json:"name"` }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		respondError(w, http.StatusBadRequest, "Nama unit wajib diisi")
+		return
+	}
+	u, err := h.repo.CreateUnit(r.Context(), strings.TrimSpace(body.Name))
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			respondError(w, http.StatusConflict, "Unit dengan nama itu sudah ada")
+			return
+		}
+		respondInternal(w, err, "gagal menambah unit")
+		return
+	}
+	respondJSON(w, http.StatusCreated, u)
+}
+
+func (h *DailyTaskHandler) UpdateUnit(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct { Name string `json:"name"` }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		respondError(w, http.StatusBadRequest, "Nama unit wajib diisi")
+		return
+	}
+	u, err := h.repo.UpdateUnit(r.Context(), id, strings.TrimSpace(body.Name))
+	if err != nil {
+		if strings.Contains(err.Error(), "tidak ditemukan") { respondError(w, http.StatusNotFound, "Unit tidak ditemukan"); return }
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			respondError(w, http.StatusConflict, "Unit dengan nama itu sudah ada"); return
+		}
+		respondInternal(w, err, "gagal mengubah unit"); return
+	}
+	respondJSON(w, http.StatusOK, u)
+}
+
+func (h *DailyTaskHandler) DeleteUnit(w http.ResponseWriter, r *http.Request) {
+	err := h.repo.DeleteUnit(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		if strings.Contains(err.Error(), "tidak ditemukan") { respondError(w, http.StatusNotFound, "Unit tidak ditemukan"); return }
+		if strings.Contains(err.Error(), "foreign key") {
+			respondError(w, http.StatusConflict, "Unit masih dipakai daily task — ubah dulu task yang memakainya")
+			return
+		}
+		respondInternal(w, err, "gagal menghapus unit"); return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (h *DailyTaskHandler) ListUnits(w http.ResponseWriter, r *http.Request) {
 	units, err := h.repo.ListUnits(r.Context())
 	if err != nil {
@@ -192,6 +242,7 @@ type dailyTaskInput struct {
 	TaskDate     string  `json:"task_date"`
 	ReporterName string  `json:"reporter_name"`
 	UnitID       *string `json:"unit_id"`
+	CategoryID   *string `json:"category_id"`
 	Issue        string  `json:"issue"`
 	Detail       string  `json:"detail"`
 	Solution     string  `json:"solution"`
@@ -230,7 +281,10 @@ func (in dailyTaskInput) bind() (*model.DailyTask, string) {
 	if strings.TrimSpace(in.ReporterName) == "" {
 		return nil, "Pelapor wajib diisi"
 	}
-	if strings.TrimSpace(in.Issue) == "" {
+	// Kendala sekarang berasal dari kategori tiket (category_id). Frontend
+	// mengirim issue = nama kategori; untuk klien lama yang belum mengirim
+	// issue, category_id yang valid tetap cukup (kolom issue NOT NULL).
+	if strings.TrimSpace(in.Issue) == "" && (in.CategoryID == nil || strings.TrimSpace(*in.CategoryID) == "") {
 		return nil, "Kendala wajib diisi"
 	}
 	if strings.TrimSpace(in.ComplainAt) == "" {
@@ -242,6 +296,10 @@ func (in dailyTaskInput) bind() (*model.DailyTask, string) {
 	var unitID *string
 	if in.UnitID != nil && strings.TrimSpace(*in.UnitID) != "" {
 		unitID = in.UnitID
+	}
+	var categoryID *string
+	if in.CategoryID != nil && strings.TrimSpace(*in.CategoryID) != "" {
+		categoryID = in.CategoryID
 	}
 
 	complainAt, err := parseLocalTime(in.ComplainAt)
@@ -273,7 +331,11 @@ func (in dailyTaskInput) bind() (*model.DailyTask, string) {
 		TaskDate:     in.TaskDate,
 		ReporterName: strings.TrimSpace(in.ReporterName),
 		UnitID:       unitID,
-		Issue:        strings.TrimSpace(in.Issue),
+		CategoryID:   categoryID,
+		Issue:        func() string {
+			if v := strings.TrimSpace(in.Issue); v != "" { return v }
+			return "-" // diisi frontend dengan nama kategori; placeholder untuk API lama
+		}(),
 		Detail:       in.Detail,
 		Solution:     in.Solution,
 		ComplainAt:   *complainAt,

@@ -21,6 +21,30 @@ func NewDailyTaskRepository(db *pgxpool.Pool) *DailyTaskRepository {
 	return &DailyTaskRepository{db: db}
 }
 
+// CreateUnit/UpdateUnit/DeleteUnit — CRUD unit (departemen). Dipakai
+// admin/leader lewat endpoint /units. Delete gagal kalau unit masih dipakai
+// daily task; frontend diminta mengganti dulu lewat pesan errornya.
+func (r *DailyTaskRepository) CreateUnit(ctx context.Context, name string) (*model.Unit, error) {
+	var u model.Unit
+	err := r.db.QueryRow(ctx, `INSERT INTO units (name) VALUES ($1) RETURNING id, name`, name).
+		Scan(&u.ID, &u.Name)
+	return &u, err
+}
+
+func (r *DailyTaskRepository) UpdateUnit(ctx context.Context, id, name string) (*model.Unit, error) {
+	tag, err := r.db.Exec(ctx, `UPDATE units SET name = $1 WHERE id = $2`, name, id)
+	if err != nil { return nil, err }
+	if tag.RowsAffected() == 0 { return nil, errors.New("unit tidak ditemukan") }
+	return &model.Unit{ID: id, Name: name}, nil
+}
+
+func (r *DailyTaskRepository) DeleteUnit(ctx context.Context, id string) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM units WHERE id = $1`, id)
+	if err != nil { return err }
+	if tag.RowsAffected() == 0 { return errors.New("unit tidak ditemukan") }
+	return nil
+}
+
 func (r *DailyTaskRepository) ListUnits(ctx context.Context) ([]model.Unit, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, name FROM units ORDER BY name`)
 	if err != nil {
@@ -52,12 +76,14 @@ type DailyTaskFilter struct {
 
 const dailyTaskSelect = `
 	SELECT dt.id, dt.task_date::text, dt.reporter_name, dt.unit_id, u.name,
+		dt.category_id, c.name,
 		dt.issue, COALESCE(dt.detail, ''), COALESCE(dt.solution, ''),
 		dt.complain_at, dt.start_at, dt.end_at,
 		dt.response_minutes, dt.duration_minutes,
 		dt.created_by, creator.name, dt.created_at, dt.updated_at
 	FROM daily_tasks dt
 	LEFT JOIN units u ON u.id = dt.unit_id
+	LEFT JOIN categories c ON c.id = dt.category_id
 	LEFT JOIN users creator ON creator.id = dt.created_by
 `
 
@@ -65,6 +91,7 @@ func scanDailyTask(row pgx.Row) (*model.DailyTask, error) {
 	var t model.DailyTask
 	err := row.Scan(
 		&t.ID, &t.TaskDate, &t.ReporterName, &t.UnitID, &t.UnitName,
+		&t.CategoryID, &t.CategoryName,
 		&t.Issue, &t.Detail, &t.Solution,
 		&t.ComplainAt, &t.StartAt, &t.EndAt,
 		&t.ResponseMinutes, &t.DurationMinutes,
@@ -111,6 +138,7 @@ func (r *DailyTaskRepository) List(ctx context.Context, f DailyTaskFilter) ([]mo
 		var t model.DailyTask
 		if err := rows.Scan(
 			&t.ID, &t.TaskDate, &t.ReporterName, &t.UnitID, &t.UnitName,
+			&t.CategoryID, &t.CategoryName,
 			&t.Issue, &t.Detail, &t.Solution,
 			&t.ComplainAt, &t.StartAt, &t.EndAt,
 			&t.ResponseMinutes, &t.DurationMinutes,
@@ -132,12 +160,12 @@ func (r *DailyTaskRepository) Create(ctx context.Context, t *model.DailyTask) er
 	// GENERATED, Postgres menolak nilai eksplisit untuk kolom seperti itu.
 	return r.db.QueryRow(ctx, `
 		INSERT INTO daily_tasks (
-			task_date, reporter_name, unit_id, issue, detail, solution,
+			task_date, reporter_name, unit_id, category_id, issue, detail, solution,
 			complain_at, start_at, end_at, created_by
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at, updated_at
-	`, t.TaskDate, t.ReporterName, t.UnitID, t.Issue, t.Detail, t.Solution,
+	`, t.TaskDate, t.ReporterName, t.UnitID, t.CategoryID, t.Issue, t.Detail, t.Solution,
 		t.ComplainAt, t.StartAt, t.EndAt, t.CreatedBy,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 }
@@ -145,11 +173,11 @@ func (r *DailyTaskRepository) Create(ctx context.Context, t *model.DailyTask) er
 func (r *DailyTaskRepository) Update(ctx context.Context, t *model.DailyTask) error {
 	tag, err := r.db.Exec(ctx, `
 		UPDATE daily_tasks
-		SET task_date = $1, reporter_name = $2, unit_id = $3, issue = $4,
-			detail = $5, solution = $6, complain_at = $7, start_at = $8, end_at = $9,
-			updated_at = now()
-		WHERE id = $10
-	`, t.TaskDate, t.ReporterName, t.UnitID, t.Issue, t.Detail, t.Solution,
+		SET task_date = $1, reporter_name = $2, unit_id = $3, category_id = $4,
+			issue = $5, detail = $6, solution = $7, complain_at = $8,
+			start_at = $9, end_at = $10, updated_at = now()
+		WHERE id = $11
+	`, t.TaskDate, t.ReporterName, t.UnitID, t.CategoryID, t.Issue, t.Detail, t.Solution,
 		t.ComplainAt, t.StartAt, t.EndAt, t.ID)
 	if err != nil {
 		return err

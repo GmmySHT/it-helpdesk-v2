@@ -18,14 +18,14 @@ import (
 // memakai kolom berbeda (claimed_by vs created_by) karena pada daily task
 // pencatat = pengerjanya — tidak ada alur claim.
 type StaffKPI struct {
-	StaffID   string `json:"staff_id"`
-	StaffName string `json:"staff_name"`
-	Role      string `json:"role"`
+	StaffID    string `json:"staff_id"`
+	StaffName  string `json:"staff_name"`
+	Role       string `json:"role"`
 	Department string `json:"department,omitempty"`
 
 	// Dari tiket
-	TicketsCreated       int     `json:"tickets_created"`
-	TicketsResolved      int     `json:"tickets_resolved"`
+	TicketsCreated  int `json:"tickets_created"`
+	TicketsResolved int `json:"tickets_resolved"`
 	// TicketsAnalyzed menghitung tiket yang dianalisa staf ini (analysis_by).
 	// Berbeda dengan TicketsResolved: analyst sering tidak mengerjakan tiket
 	// yang dia analisa, jadi tanpa kolom ini kontribusinya hilang dari KPI.
@@ -36,9 +36,9 @@ type StaffKPI struct {
 	ReopenCount          int     `json:"reopen_count"`
 
 	// Dari daily task
-	DailyTasks            int     `json:"daily_tasks"`
-	AvgDailyDurationMin   float64 `json:"avg_daily_duration_minutes"`
-	AvgDailyResponseMin   float64 `json:"avg_daily_response_minutes"`
+	DailyTasks          int     `json:"daily_tasks"`
+	AvgDailyDurationMin float64 `json:"avg_daily_duration_minutes"`
+	AvgDailyResponseMin float64 `json:"avg_daily_response_minutes"`
 
 	// Gabungan — dipakai untuk mengurutkan leaderboard KPI.
 	TotalWorkItems int `json:"total_work_items"`
@@ -49,10 +49,11 @@ type KPIOverview struct {
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
 
-	TotalTickets      int `json:"total_tickets"`
-	TicketsResolved   int `json:"tickets_resolved"`
-	TotalDailyTasks   int `json:"total_daily_tasks"`
-	TotalWorkItems    int `json:"total_work_items"`
+	TotalTickets    int `json:"total_tickets"`
+	TicketsResolved int `json:"tickets_resolved"`
+	TicketsAnalyzed int `json:"tickets_analyzed"`
+	TotalDailyTasks int `json:"total_daily_tasks"`
+	TotalWorkItems  int `json:"total_work_items"`
 
 	AvgTicketResolutionMinutes float64 `json:"avg_ticket_resolution_minutes"`
 	AvgDailyDurationMinutes    float64 `json:"avg_daily_duration_minutes"`
@@ -233,6 +234,23 @@ func (r *StatsRepository) GetKPIOverview(ctx context.Context, from, to *time.Tim
 			AND task_date <= COALESCE($2::date, 'infinity'::date)
 			AND ($3::uuid IS NULL OR created_by = $3::uuid)
 	`, from, to, staffFilter).Scan(&o.TotalDailyTasks, &o.AvgDailyDurationMinutes, &o.AvgDailyResponseMinutes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Tiket dianalisa dihitung terpisah dari yang diklaim: analyst bisa
+	// menganalisa tiket yang dikerjakan orang lain. Filter mengikuti actor
+	// analysis_by, bukan claimed_by — kalau memakai claimed_by angka analisa
+	// akan kosong untuk analyst yang tidak pernah mengklaim tiket.
+	err = r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM tickets
+		WHERE deleted_at IS NULL
+			AND analysis_by IS NOT NULL
+			AND created_at >= COALESCE($1, '-infinity'::timestamptz)
+			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR analysis_by = $3::uuid)
+	`, from, to, staffFilter).Scan(&o.TicketsAnalyzed)
 	if err != nil {
 		return nil, err
 	}

@@ -21,9 +21,13 @@ import { Sidebar } from "@/components/sidebar";
 import { useAuth } from "@/lib/auth-context";
 import {
   getStaffKPI,
+  getStaffKPIDetail,
   downloadKPIExport,
   StaffKPIPayload,
   StaffKPI,
+  StaffKPIDetailPayload,
+  KPITicketRow,
+  KPIDailyRow,
 } from "@/lib/api";
 import { Download, Loader2, Users, Ticket, ClipboardList, Printer, UserRound, Lock } from "lucide-react";
 
@@ -66,6 +70,9 @@ export default function KPIReportPage() {
   });
 
   const [data, setData] = useState<StaffKPIPayload | null>(null);
+  // Rincian item analisa & daily task (seluruh staf) — dipakai kartu ringkasan
+  // dan daftar rincian di bawah tabel kinerja.
+  const [detail, setDetail] = useState<StaffKPIDetailPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -82,8 +89,11 @@ export default function KPIReportPage() {
     if (!token) return;
     setLoading(true);
     setError("");
-    getStaffKPI(token, from, to)
-      .then((d) => setData(d))
+    Promise.all([
+      getStaffKPI(token, from, to),
+      getStaffKPIDetail(token, from, to),
+    ])
+      .then(([d, dd]) => { setData(d); setDetail(dd); })
       .catch((err) => setError(err instanceof Error ? err.message : "Gagal memuat KPI"))
       .finally(() => setLoading(false));
   }, [token, from, to]);
@@ -257,6 +267,18 @@ export default function KPIReportPage() {
             <div className="rounded-md border border-border bg-card p-4">
               <div className="flex items-center gap-2 text-text-muted">
                 <ClipboardList className="h-3.5 w-3.5" />
+                <p className="text-[11px] uppercase tracking-wide">Tiket Dianalisa</p>
+              </div>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-accent">
+                {ov?.tickets_analyzed ?? 0}
+              </p>
+              <p className="mt-0.5 text-[11px] text-text-muted">
+                dari {(detail?.details || []).reduce((n, d) => n + (d.analyzed_tickets?.length || 0), 0)} rincian
+              </p>
+            </div>
+            <div className="rounded-md border border-border bg-card p-4">
+              <div className="flex items-center gap-2 text-text-muted">
+                <ClipboardList className="h-3.5 w-3.5" />
                 <p className="text-[11px] uppercase tracking-wide">Daily Task</p>
               </div>
               <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-text-primary">
@@ -307,6 +329,64 @@ export default function KPIReportPage() {
               </div>
             </div>
           )}
+
+          {/* Rincian item — tiket dianalisa & daily task keseluruhan staf */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="overflow-hidden rounded-md border border-border bg-card">
+              <p className="border-b border-border px-4 py-3 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Rincian Tiket Dianalisa
+              </p>
+              {(detail?.details || []).every((d) => (d.analyzed_tickets?.length || 0) === 0) ? (
+                <p className="px-4 py-8 text-center text-xs text-text-muted">Belum ada tiket dianalisa.</p>
+              ) : (
+                <div className="max-h-80 overflow-auto slim-scroll">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-card-hover text-[11px] uppercase text-text-muted">
+                      <tr><th className="px-3 py-2">Kode</th><th className="px-3 py-2">Judul</th><th className="px-3 py-2">Analyst</th></tr>
+                    </thead>
+                    <tbody>
+                      {(detail?.details || []).flatMap((d) =>
+                        (d.analyzed_tickets || []).map((t: KPITicketRow, i: number) => (
+                          <tr key={`${d.staff.staff_id}-${t.ticket_code}-${i}`} className="border-t border-border-subtle">
+                            <td className="px-3 py-2 font-mono text-accent">{t.ticket_code}</td>
+                            <td className="px-3 py-2 text-text-primary">{t.title}</td>
+                            <td className="px-3 py-2 text-text-secondary">{d.staff.staff_name}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="overflow-hidden rounded-md border border-border bg-card">
+              <p className="border-b border-border px-4 py-3 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Rincian Daily Task ({(detail?.details || []).reduce((n, d) => n + (d.daily_tasks?.length || 0), 0)})
+              </p>
+              {(detail?.details || []).every((d) => (d.daily_tasks?.length || 0) === 0) ? (
+                <p className="px-4 py-8 text-center text-xs text-text-muted">Belum ada daily task.</p>
+              ) : (
+                <div className="max-h-80 overflow-auto slim-scroll">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-card-hover text-[11px] uppercase text-text-muted">
+                      <tr><th className="px-3 py-2">Tanggal</th><th className="px-3 py-2">Kendala</th><th className="px-3 py-2">Staf</th></tr>
+                    </thead>
+                    <tbody>
+                      {(detail?.details || []).flatMap((d) =>
+                        (d.daily_tasks || []).map((t: KPIDailyRow, i: number) => (
+                          <tr key={`${d.staff.staff_id}-${t.task_date}-${i}`} className="border-t border-border-subtle">
+                            <td className="px-3 py-2 text-text-muted">{t.task_date}</td>
+                            <td className="px-3 py-2 text-text-primary">{t.issue}</td>
+                            <td className="px-3 py-2 text-text-secondary">{d.staff.staff_name}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Tabel KPI per staf */}
           <div className="overflow-hidden rounded-md border border-border bg-card">

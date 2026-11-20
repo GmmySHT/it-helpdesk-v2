@@ -15,6 +15,10 @@ type DailyTask struct {
 	UnitID       *string `json:"unit_id,omitempty"`
 	UnitName     *string `json:"unit_name,omitempty"`
 
+	// Kendala diambil dari kategori tiket (sumber tunggal), bukan teks bebas.
+	CategoryID   *string `json:"category_id,omitempty"`
+	CategoryName *string `json:"category_name,omitempty"`
+
 	Issue    string `json:"issue"`
 	Detail   string `json:"detail,omitempty"`
 	Solution string `json:"solution,omitempty"`

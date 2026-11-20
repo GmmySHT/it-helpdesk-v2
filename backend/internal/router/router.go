@@ -282,6 +282,13 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Group(func(r chi.Router) {
 				r.Use(appmiddleware.RequireRole(model.RoleITSupport, model.RoleAnalyst, model.RoleProgrammer, model.RoleDevOps, model.RoleLeader, model.RoleAdmin))
 				r.Get("/units", dailyTaskHandler.ListUnits)
+				// CRUD unit (departemen) — perubahan data master hanya leader/admin.
+				r.Group(func(r chi.Router) {
+					r.Use(appmiddleware.RequireRole(model.RoleLeader, model.RoleAdmin))
+					r.Post("/units", dailyTaskHandler.CreateUnit)
+					r.Put("/units/{id}", dailyTaskHandler.UpdateUnit)
+					r.Delete("/units/{id}", dailyTaskHandler.DeleteUnit)
+				})
 				r.Get("/daily-tasks", dailyTaskHandler.List)
 				r.Get("/daily-tasks/{id}", dailyTaskHandler.Get)
 				r.Post("/daily-tasks", dailyTaskHandler.Create)

@@ -26,7 +26,12 @@ import {
   DailyTask,
   DailyTaskInput,
   Unit,
+  Category,
   listUnits,
+  createUnit,
+  renameUnit,
+  deleteUnit,
+  listCategories,
   listDailyTasks,
   createDailyTask,
   updateDailyTask,
@@ -104,6 +109,7 @@ const emptyForm = (): DailyTaskInput => ({
   task_date: todayISO(),
   reporter_name: "",
   unit_id: "",
+  category_id: "",
   issue: "",
   detail: "",
   solution: "",
@@ -118,6 +124,11 @@ export default function DailyTasksPage() {
 
   const [tasks, setTasks] = useState<DailyTask[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [unitModal, setUnitModal] = useState(false);
+  const [unitName, setUnitName] = useState("");
+  const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
+  const [unitError, setUnitError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -137,6 +148,7 @@ export default function DailyTasksPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmUnit, setConfirmUnit] = useState<Unit | null>(null);
   // File lampiran untuk task baru: diunggah setelah task berhasil dibuat.
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [expandedAttId, setExpandedAttId] = useState<string | null>(null);
@@ -153,14 +165,55 @@ export default function DailyTasksPage() {
     if (!isLoading && user && isReporter(user.role)) router.push("/dashboard");
   }, [isLoading, user, router]);
 
-  // Unit hanya perlu diambil sekali — daftarnya tidak berubah saat filter
-  // tanggal digeser.
+  // Unit & kategori diambil sekali — daftar master tidak berubah saat filter
+  // tanggal digeser. Kategori dipakai sebagai pilihan Kendala.
   useEffect(() => {
     if (!token) return;
-    listUnits(token)
-      .then((d) => setUnits(d || []))
-      .catch(() => setUnits([]));
+    listUnits(token).then((d) => setUnits(d || [])).catch(() => setUnits([]));
+    listCategories(token).then((d) => setCategories(d || [])).catch(() => setCategories([]));
   }, [token]);
+
+  function reloadUnits() {
+    if (!token) return;
+    listUnits(token).then((d) => setUnits(d || [])).catch(() => setUnits([]));
+  }
+
+  function openUnitModal(u?: Unit) {
+    setEditingUnitId(u?.id || null);
+    setUnitName(u?.name || "");
+    setUnitError("");
+    setUnitModal(true);
+  }
+
+  async function saveUnit(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !unitName.trim()) return;
+    setUnitError("");
+    try {
+      if (editingUnitId) await renameUnit(token, editingUnitId, unitName.trim());
+      else await createUnit(token, unitName.trim());
+      reloadUnits();
+      setUnitModal(false);
+    } catch (err) {
+      setUnitError(err instanceof Error ? err.message : "Gagal menyimpan unit");
+    }
+  }
+
+  function askRemoveUnit(u: Unit) {
+    setConfirmUnit(u);
+  }
+
+  async function removeUnit(u: Unit) {
+    if (!token) return;
+    setUnitError("");
+    try {
+      await deleteUnit(token, u.id);
+      reloadUnits();
+      setConfirmUnit(null);
+    } catch (err) {
+      setUnitError(err instanceof Error ? err.message : "Gagal menghapus unit");
+    }
+  }
 
   async function loadTasks() {
     if (!token) return;
@@ -226,6 +279,7 @@ export default function DailyTasksPage() {
       task_date: t.task_date.slice(0, 10),
       reporter_name: t.reporter_name,
       unit_id: t.unit_id || "",
+      category_id: t.category_id || "",
       issue: t.issue,
       detail: t.detail || "",
       solution: t.solution || "",
@@ -247,6 +301,10 @@ export default function DailyTasksPage() {
       setFormError("Pelapor wajib diisi.");
       return;
     }
+    if (!form.category_id) {
+      setFormError("Kendala wajib dipilih.");
+      return;
+    }
     if (!form.complain_at) {
       setFormError("Waktu komplain wajib diisi — dari situ response time dihitung.");
       return;
@@ -265,9 +323,12 @@ export default function DailyTasksPage() {
       // datetime-local menghasilkan "2026-11-12T08:30" tanpa zona waktu.
       // Backend (Go) mem-parse sebagai waktu LOKAL SERVER dan menyimpannya
       // sebagai timestamptz, jadi string ini dikirim apa adanya.
+      const selectedCategory = categories.find((c) => c.id === form.category_id);
       const payload: DailyTaskInput = {
         ...form,
         unit_id: form.unit_id || null,
+        category_id: form.category_id || null,
+        issue: selectedCategory?.name || form.issue,
         start_at: form.start_at || null,
         end_at: form.end_at || null,
       };
@@ -331,7 +392,12 @@ export default function DailyTasksPage() {
         <PageHeader
           title="Daily Task"
           subtitle="Pekerjaan harian di luar tiket — ikut dihitung di Laporan KPI"
-          actions={[{ label: "+ Catat Daily Task", onClick: openCreate, variant: "primary" as const }]}
+          actions={[
+            { label: "+ Catat Daily Task", onClick: openCreate, variant: "primary" as const },
+            ...(isLeaderOrAdmin
+              ? [{ label: "Kelola Unit", onClick: () => openUnitModal(), variant: "secondary" as const }]
+              : []),
+          ]}
         />
 
         <div className="page-transition space-y-4 p-4 md:p-6">
@@ -456,13 +522,22 @@ export default function DailyTasksPage() {
 
                 <div className="sm:col-span-2 lg:col-span-3">
                   <label className={labelClass}>Kendala *</label>
-                  <input
+                  <select
                     required
-                    value={form.issue}
-                    onChange={(e) => setForm({ ...form, issue: e.target.value })}
-                    placeholder="Ringkas: printer loket tidak mencetak"
+                    value={form.category_id || ""}
+                    onChange={(e) => setForm({ ...form, category_id: e.target.value })}
                     className={inputClass}
-                  />
+                  >
+                    <option value="">Pilih kategori kendala</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-text-muted">
+                    Memakai kategori tiket. Detail kendala ditulis di kolom Keterangan.
+                  </p>
                 </div>
 
                 <div className="sm:col-span-2 lg:col-span-3">
@@ -797,6 +872,64 @@ export default function DailyTasksPage() {
             </div>
           )}
         </div>
+
+        {/* Modal CRUD Unit (departemen) — hanya leader/admin */}
+        {unitModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-display)] text-base text-text-primary">
+                  {editingUnitId ? "Ubah Unit" : "Kelola Unit"}
+                </h2>
+                <button type="button" onClick={() => setUnitModal(false)} className="rounded p-1 text-text-muted hover:bg-border/50">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <form onSubmit={saveUnit} className="flex gap-2">
+                <input
+                  autoFocus
+                  value={unitName}
+                  onChange={(e) => setUnitName(e.target.value)}
+                  placeholder="Nama unit, mis. IGD"
+                  className={inputClass}
+                />
+                <button type="submit" className="flex items-center gap-1 rounded-md bg-accent px-3 py-2 text-xs font-medium text-white">
+                  <Save className="h-3.5 w-3.5" /> {editingUnitId ? "Simpan" : "Tambah"}
+                </button>
+              </form>
+              {unitError && <p className="mt-2 text-xs text-red">{unitError}</p>}
+              <div className="mt-4 max-h-56 space-y-1 overflow-y-auto border-t border-border pt-3">
+                {units.map((u) => (
+                  <div key={u.id} className="flex items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-border/40">
+                    <span className="text-text-primary">{u.name}</span>
+                    <span className="flex gap-1">
+                      <button type="button" onClick={() => openUnitModal(u)} className="rounded p-1 text-text-muted hover:text-accent" title="Ubah">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" onClick={() => askRemoveUnit(u)} className="rounded p-1 text-text-muted hover:text-red" title="Hapus">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Konfirmasi hapus unit — dialog sendiri, bukan confirm() bawaan */}
+        {confirmUnit && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-sm rounded-lg border border-border bg-card p-5 shadow-xl">
+              <p className="text-sm text-text-primary">Hapus unit "{confirmUnit.name}"?</p>
+              <p className="mt-1 text-xs text-text-muted">Unit yang masih dipakai daily task tidak bisa dihapus.</p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => setConfirmUnit(null)} className="rounded-md border border-border px-3 py-1.5 text-xs">Batal</button>
+                <button type="button" onClick={() => removeUnit(confirmUnit)} className="rounded-md bg-red px-3 py-1.5 text-xs text-white">Hapus</button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

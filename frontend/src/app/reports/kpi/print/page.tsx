@@ -261,6 +261,7 @@ function KpiPrintInner() {
             detail={d}
             period={{ from, to }}
             pageBreak={idx > 0}
+            docIndex={idx}
           />
         ))}
       </main>
@@ -272,10 +273,12 @@ function StaffSection({
   detail,
   period,
   pageBreak,
+  docIndex,
 }: {
   detail: StaffKPIDetail;
   period: { from: string; to: string };
   pageBreak: boolean;
+  docIndex: number;
 }) {
   const s = detail.staff;
   const tickets = detail.tickets || [];
@@ -300,6 +303,24 @@ function StaffSection({
         </h1>
         <p className="mt-1 text-sm">{INSTITUTION_NAME}</p>
       </div>
+
+      {/* Blok identitas dokumen — format laporan formal */}
+      <table className="mb-5 w-full border-collapse text-xs">
+        <tbody>
+          <tr>
+            <td className="w-[18%] py-1 font-semibold">Nomor</td>
+            <td className="py-1">KPI/{new Date().getFullYear()}/{String(docIndex + 1).padStart(3, "0")}</td>
+            <td className="w-[18%] py-1 font-semibold">Perihal</td>
+            <td className="py-1">Laporan Kinerja Staf IT</td>
+          </tr>
+          <tr>
+            <td className="py-1 font-semibold">Lampiran</td>
+            <td className="py-1">{tickets.length + analyzed.length + dailies.length} item</td>
+            <td className="py-1 font-semibold">Tanggal</td>
+            <td className="py-1">{new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })}</td>
+          </tr>
+        </tbody>
+      </table>
 
       {/* Identitas staf + periode */}
       <table className="mb-5 w-full border-collapse text-sm">
@@ -550,14 +571,16 @@ function StaffSection({
         </table>
       )}
 
-      {/* Tanda tangan */}
+      {/* Tanda tangan — Leader IT mengetahui, Direktur RS menetapkan. */}
       <div className="mt-8 grid grid-cols-2 gap-10 text-center text-sm">
         <div>
-          <p className="mb-16">Staf yang dinilai</p>
-          <p className="border-t border-black pt-1 font-semibold">{s.staff_name}</p>
+          <p className="mb-16">Mengetahui, Leader IT</p>
+          <p className="border-t border-black pt-1 font-semibold">
+            (...........................)
+          </p>
         </div>
         <div>
-          <p className="mb-16">Mengetahui, Koordinator IT</p>
+          <p className="mb-16">Menetapkan, Direktur RS</p>
           <p className="border-t border-black pt-1 font-semibold">
             (...........................)
           </p>

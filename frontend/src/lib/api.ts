@@ -1359,6 +1359,8 @@ export type DailyTask = {
   reporter_name: string;
   unit_id?: string | null;
   unit_name?: string;
+  category_id?: string | null;
+  category_name?: string;
   issue: string;
   detail?: string;
   solution?: string;
@@ -1389,6 +1391,7 @@ export type DailyTaskInput = {
   task_date: string;
   reporter_name: string;
   unit_id?: string | null;
+  category_id?: string | null;
   issue: string;
   detail?: string;
   solution?: string;
@@ -1401,6 +1404,17 @@ export type Unit = { id: string; name: string };
 
 export function listUnits(token: string) {
   return request<Unit[]>(`/units`, {}, token);
+}
+
+// CRUD unit (departemen) — hanya leader/admin yang diperbolehkan backend.
+export function createUnit(token: string, name: string) {
+  return request<Unit>(`/units`, { method: "POST", body: JSON.stringify({ name }) }, token);
+}
+export function renameUnit(token: string, id: string, name: string) {
+  return request<Unit>(`/units/${id}`, { method: "PUT", body: JSON.stringify({ name }) }, token);
+}
+export function deleteUnit(token: string, id: string) {
+  return request<{ ok: boolean }>(`/units/${id}`, { method: "DELETE" }, token);
 }
 
 export function listDailyTasks(
@@ -1482,6 +1496,7 @@ export type KPIOverview = {
   to?: string;
   total_tickets: number;
   tickets_resolved: number;
+  tickets_analyzed: number;
   total_daily_tasks: number;
   total_work_items: number;
   avg_ticket_resolution_minutes: number;

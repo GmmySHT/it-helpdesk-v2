@@ -37,6 +37,12 @@ import {
   Ticket,
   Category,
   getAssetBorrowingStats,
+  getStaffKPIDetail,
+  getStaffKPI,
+  StaffKPIDetailPayload,
+  StaffKPIPayload,
+  KPIDailyRow,
+  KPITicketRow,
 } from "@/lib/api";
 
 const KPI_CARDS: {
@@ -94,6 +100,9 @@ const PRIORITY_LABEL: Record<string, string> = {
   urgent: "Mendesak",
 };
 
+const INSTITUTION_LABEL =
+  process.env.NEXT_PUBLIC_INSTITUTION_NAME || "Rumah Sakit — Unit IT / SIMRS";
+
 const PRIORITY_COLOR: Record<string, string> = {
   low: "#7C8AA3",
   medium: "#60A5FA",
@@ -122,6 +131,10 @@ export default function ReportsPage() {
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryCount[]>([]);
   const [staffPerformance, setStaffPerformance] = useState<StaffPerformance[]>([]);
   const [assetStats, setAssetStats] = useState<AssetBorrowingStats | null>(null);
+  // Ringkasan & rincian KPI gabungan (tiket dianalisa + daily task) untuk
+  // laporan keseluruhan — /reports dulu hanya punya angka tiket.
+  const [staffKPI, setStaffKPI] = useState<StaffKPIPayload | null>(null);
+  const [staffDetail, setStaffDetail] = useState<StaffKPIDetailPayload | null>(null);
   const [allTickets, setAllTickets] = useState<Ticket[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [fromDate, setFromDate] = useState("");
@@ -147,7 +160,7 @@ export default function ReportsPage() {
     if (!token) return;
     setError("");
     try {
-      const [kpi, trendData, prioData, catData, staffPerfData, tickets, cats, assetData] = await Promise.all([
+      const [kpi, trendData, prioData, catData, staffPerfData, tickets, cats, assetData, kpiAll, kpiDetail] = await Promise.all([
         getKPIReport(token, fromDate || undefined, toDate || undefined),
         getReportTrend(token, fromDate || undefined, toDate || undefined),
         getPriorityBreakdown(token, fromDate || undefined, toDate || undefined),
@@ -156,6 +169,8 @@ export default function ReportsPage() {
         listTickets(token),
         listCategories(token),
         getAssetBorrowingStats(token, fromDate || undefined, toDate || undefined),
+        getStaffKPI(token, fromDate || undefined, toDate || undefined),
+        getStaffKPIDetail(token, fromDate || undefined, toDate || undefined),
       ]);
       setReport(kpi);
       setTrend(trendData || []);
@@ -165,6 +180,8 @@ export default function ReportsPage() {
       setAllTickets(tickets || []);
       setCategories(cats || []);
       setAssetStats(assetData);
+      setStaffKPI(kpiAll);
+      setStaffDetail(kpiDetail);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat laporan");
     }
@@ -402,10 +419,8 @@ export default function ReportsPage() {
 
       autoTable(doc, {
         startY: afterAssetTableY,
-        head: [["Judul Tiket", "Kategori", "Prioritas", "Status", "Dibuat"]],
-        body: filteredTickets
-          .slice(0, 50)
-          .map((t) => [
+        head: [[`Detail Tiket (${filteredTickets.length} tiket)`, "Kategori", "Prioritas", "Status", "Dibuat"]],
+        body: filteredTickets.map((t) => [
             t.title,
             categoryMap[t.category_id] || "-",
             PRIORITY_LABEL[t.priority] || t.priority,
@@ -415,6 +430,81 @@ export default function ReportsPage() {
         headStyles: { fillColor: [45, 212, 191] },
         styles: { fontSize: 8 },
       });
+
+      // ── Ringkasan KPI gabungan (tiket dianalisa + daily task) ──────────
+      const kpiOv = staffKPI?.overview;
+      if (kpiOv) {
+        autoTable(doc, {
+          startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8,
+          head: [["Ringkasan KPI Gabungan", "Jumlah"]],
+          body: [
+            ["Tiket dianalisa", String(kpiOv.tickets_analyzed ?? 0)],
+            ["Daily task tercatat", String(kpiOv.total_daily_tasks ?? 0)],
+            ["Total item kerja (tiket + daily task)", String(kpiOv.total_work_items ?? 0)],
+            ["Rata-rata durasi harian", `${Math.round(kpiOv.avg_daily_duration_minutes ?? 0)} mnt`],
+            ["Rata-rata respon harian", `${Math.round(kpiOv.avg_daily_response_minutes ?? 0)} mnt`],
+          ],
+          headStyles: { fillColor: [45, 212, 191] },
+          styles: { fontSize: 8 },
+        });
+      }
+
+      // ── Rincian tiket dianalisa (seluruh analyst, tanpa batas 50) ─────
+      const analyzedRows = (staffDetail?.details || []).flatMap((d) =>
+        (d.analyzed_tickets || []).map((t) => [
+          t.ticket_code,
+          t.title,
+          d.staff.staff_name,
+          t.category_name || "-",
+          STATUS_LABEL[t.status] || t.status,
+        ])
+      );
+      if (analyzedRows.length) {
+        autoTable(doc, {
+          startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8,
+          head: [["Rincian Tiket Dianalisa", "", "", "", ""]],
+          body: [["Kode", "Judul", "Analyst", "Kategori", "Status"], ...analyzedRows] as string[][],
+          styles: { fontSize: 7 },
+          headStyles: { fillColor: [45, 212, 191] },
+        });
+      }
+
+      // ── Rincian daily task seluruh staf ───────────────────────────────
+      const dailyRows = (staffDetail?.details || []).flatMap((d) =>
+        (d.daily_tasks || []).map((t) => [
+          d.staff.staff_name,
+          t.task_date,
+          t.issue,
+          t.reporter_name,
+          t.solution || "-",
+          String(t.duration_minutes ?? 0),
+        ])
+      );
+      if (dailyRows.length) {
+        autoTable(doc, {
+          startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8,
+          head: [["Rincian Daily Task", "", "", "", "", ""]],
+          body: [["Staf", "Tanggal", "Kendala", "Pelapor", "Solusi", "Durasi(mnt)"], ...dailyRows] as string[][],
+          styles: { fontSize: 7 },
+          headStyles: { fillColor: [45, 212, 191] },
+        });
+      }
+
+      // ── Tanda tangan: Leader IT & Direktur RS ─────────────────────────
+      const signY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
+      doc.setFontSize(10);
+      doc.setTextColor(20);
+      doc.text(`Mengetahui,`, 14, signY);
+      doc.text(`${INSTITUTION_LABEL}`, 110, signY);
+      doc.text("Leader IT", 14, signY + 5);
+      doc.text("Direktur RS", 110, signY + 5);
+      doc.setDrawColor(150);
+      doc.line(14, signY + 20, 90, signY + 20);
+      doc.line(110, signY + 20, 186, signY + 20);
+      doc.setTextColor(100);
+      doc.setFontSize(8);
+      doc.text("( ........................................ )", 14, signY + 25);
+      doc.text("( ........................................ )", 110, signY + 25);
 
       doc.save(`laporan-kpi-${fromDate || "semua"}-${toDate || "sekarang"}.pdf`);
     } catch {
@@ -544,6 +634,40 @@ export default function ReportsPage() {
                 </div>
               );
             })}
+          </div>
+
+          {/* Ringkasan KPI gabungan — tiket dianalisa & daily task tidak
+              muncul di 8 kartu metrik tiket di atas, jadi ditampilkan di sini
+              sebagai gambaran keseluruhan kerja tim. */}
+          <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="rounded-lg border border-accent/30 bg-card p-4">
+              <p className="text-[10px] uppercase tracking-wide text-text-muted">Tiket Dianalisa</p>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold text-accent">
+                {staffKPI?.overview?.tickets_analyzed ?? 0}
+              </p>
+              <p className="text-[11px] text-text-muted">dianalisa tim</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-[10px] uppercase tracking-wide text-text-muted">Daily Task</p>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold text-text-primary">
+                {staffKPI?.overview?.total_daily_tasks ?? 0}
+              </p>
+              <p className="text-[11px] text-text-muted">pekerjaan tercatat</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-[10px] uppercase tracking-wide text-text-muted">Total Item Kerja</p>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold text-text-primary">
+                {staffKPI?.overview?.total_work_items ?? 0}
+              </p>
+              <p className="text-[11px] text-text-muted">tiket + daily task</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-[10px] uppercase tracking-wide text-text-muted">Staf Aktif</p>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold text-text-primary">
+                {staffKPI?.staff?.length ?? 0}
+              </p>
+              <p className="text-[11px] text-text-muted">periode ini</p>
+            </div>
           </div>
 
           {/* Grafik tren */}
@@ -698,6 +822,74 @@ export default function ReportsPage() {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* Rincian tiket dianalisa + daily task seluruh staf */}
+          <div className="mb-6 grid gap-6 lg:grid-cols-2">
+            <div className="rounded-lg border border-border bg-card p-6">
+              <p className="mb-4 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Tiket Dianalisa ({(staffDetail?.details || []).reduce((n, d) => n + (d.analyzed_tickets?.length || 0), 0)})
+              </p>
+              {(staffDetail?.details || []).every((d) => (d.analyzed_tickets?.length || 0) === 0) ? (
+                <p className="text-center text-xs text-text-muted">Belum ada tiket dianalisa pada periode ini.</p>
+              ) : (
+                <div className="max-h-72 overflow-auto slim-scroll">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-card">
+                      <tr className="border-b border-border text-text-muted">
+                        <th className="pb-2 pr-3">Kode</th>
+                        <th className="pb-2 pr-3">Judul</th>
+                        <th className="pb-2 pr-3">Analyst</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(staffDetail?.details || []).flatMap((d) =>
+                        (d.analyzed_tickets || []).map((t: KPITicketRow, i: number) => (
+                          <tr key={`${d.staff.staff_id}-${t.ticket_code}-${i}`} className="border-b border-border-subtle">
+                            <td className="py-2 pr-3 font-mono text-accent">{t.ticket_code}</td>
+                            <td className="py-2 pr-3 text-text-primary">{t.title}</td>
+                            <td className="py-2 pr-3 text-text-secondary">{d.staff.staff_name}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6">
+              <p className="mb-4 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Daily Task ({(staffDetail?.details || []).reduce((n, d) => n + (d.daily_tasks?.length || 0), 0)})
+              </p>
+              {(staffDetail?.details || []).every((d) => (d.daily_tasks?.length || 0) === 0) ? (
+                <p className="text-center text-xs text-text-muted">Belum ada daily task pada periode ini.</p>
+              ) : (
+                <div className="max-h-72 overflow-auto slim-scroll">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-card">
+                      <tr className="border-b border-border text-text-muted">
+                        <th className="pb-2 pr-3">Tanggal</th>
+                        <th className="pb-2 pr-3">Kendala</th>
+                        <th className="pb-2 pr-3">Pelapor</th>
+                        <th className="pb-2 pr-3">Staf</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(staffDetail?.details || []).flatMap((d) =>
+                        (d.daily_tasks || []).map((t: KPIDailyRow, i: number) => (
+                          <tr key={`${d.staff.staff_id}-${t.task_date}-${i}`} className="border-b border-border-subtle">
+                            <td className="py-2 pr-3 text-text-muted">{t.task_date}</td>
+                            <td className="py-2 pr-3 text-text-primary">{t.issue}</td>
+                            <td className="py-2 pr-3 text-text-secondary">{t.reporter_name}</td>
+                            <td className="py-2 pr-3 text-text-secondary">{d.staff.staff_name}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Tabel detail tiket */}
