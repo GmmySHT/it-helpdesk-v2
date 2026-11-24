@@ -93,7 +93,7 @@ export default function ProjectListPage() {
       ]);
       // Kompatibel dengan biner lama yang belum di-restart: dulu endpoint
       // mengembalikan Ticket[] langsung, sekarang ProjectSummary[].
-      setProjects(list.map((item: any) => item && item.ticket
+      setProjects((list || []).map((item: any) => item && item.ticket
         ? item
         : { ticket: item, pic_name: "", member_count: 0, milestone_count: 0,
             milestone_done: 0, task_count: 0, task_done: 0, progress: 0,
@@ -110,7 +110,7 @@ export default function ProjectListPage() {
   useEffect(() => {
     if (!authLoading && !token) { router.push("/login"); return; }
     if (!token) return;
-    listCategories(token).then(setCategories).catch(() => {});
+    listCategories(token).then((v) => setCategories(v || [])).catch(() => {});
     load();
   }, [token, authLoading, router, load]);
 

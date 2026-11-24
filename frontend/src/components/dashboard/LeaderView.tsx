@@ -68,10 +68,6 @@ function delta(current: number | null | undefined, previous: number | null | und
   return ((current - previous) / Math.abs(previous)) * 100;
 }
 
-function pct(value: number | null | undefined) {
-  return value == null ? null : Math.round(value * 100);
-}
-
 /** Hitung SLA compliance dari angka lama (rumus tidak diubah). */
 function legacySla(s: StatsSummary | null) {
   if (!s || s.total_resolved_or_closed === 0) return null;
@@ -128,7 +124,7 @@ export function LeaderView({ token, refreshKey }: { token: string | null; refres
         value: legacySla(summary) == null ? "—" : `${Math.round(legacySla(summary)!)}%`,
         icon: <ClipboardCheck className="h-4 w-4" />,
         href: "/tickets?at_risk=1",
-        delta: delta(pct(current?.sla_compliance), pct(previous?.sla_compliance)),
+        delta: delta(current?.sla_compliance, previous?.sla_compliance),
       },
       {
         label: "Rata-rata Resolusi",
@@ -167,7 +163,7 @@ export function LeaderView({ token, refreshKey }: { token: string | null; refres
             icon={k.icon}
             href={k.href}
             loading={loading}
-            delta={{ value: k.delta, better: k.better }}
+            delta={k.delta == null ? undefined : { value: k.delta, better: k.better, suffix: "%", precision: 1 }}
           />
         ))}
       </div>

@@ -7,6 +7,8 @@ interface KpiDelta {
   /** "lower_is_better" untuk waktu resolusi; default "higher_is_better" */
   better?: "higher_is_better" | "lower_is_better";
   suffix?: string;
+  /** Jumlah angka di belakang koma (default 1). */
+  precision?: number;
 }
 
 interface KpiCardProps {
@@ -19,7 +21,7 @@ interface KpiCardProps {
 }
 
 function DeltaView({ delta }: { delta: KpiDelta }) {
-  const { value, better = "higher_is_better", suffix = "" } = delta;
+  const { value, better = "higher_is_better", suffix = "", precision = 1 } = delta;
   if (value == null || !Number.isFinite(value)) {
     return <span className="text-[11px] text-text-muted">—</span>;
   }
@@ -35,7 +37,7 @@ function DeltaView({ delta }: { delta: KpiDelta }) {
         ? "text-red-400"
         : "text-text-muted";
   const abs = Math.abs(value);
-  const text = `${value > 0 ? "+" : value < 0 ? "-" : ""}${abs}${suffix}`;
+  const text = `${value > 0 ? "+" : value < 0 ? "-" : ""}${abs.toFixed(precision)}${suffix}`;
   return (
     <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${color}`}>
       <Icon className="h-3 w-3" aria-hidden="true" />

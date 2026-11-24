@@ -77,7 +77,7 @@ export default function ProjectDetailPage() {
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
-      setData(await getProject(token, id));
+      setData(await getProject(token, id) || null);
       setError("");
     } catch (e) { setError((e as Error).message); }
   }, [token, id]);
@@ -86,8 +86,8 @@ export default function ProjectDetailPage() {
     if (!authLoading && !token) router.push("/login");
     else if (token) {
       refresh();
-      listStaff(token).then(setStaff).catch(() => {});
-      listCoordinators(token).then(setLeaders).catch(() => {});
+      listStaff(token).then((v) => setStaff(v || [])).catch(() => {});
+      listCoordinators(token).then((v) => setLeaders(v || [])).catch(() => {});
     }
   }, [token, authLoading, id, refresh]);
 
