@@ -22,14 +22,23 @@ import { useAuth } from "@/lib/auth-context";
 import {
   getStaffKPI,
   getStaffKPIDetail,
+  getReportTrend,
+  getDailyTrend,
+  TrendPoint,
+  DailyTrendPoint,
   downloadKPIExport,
   StaffKPIPayload,
   StaffKPI,
   StaffKPIDetailPayload,
   KPITicketRow,
   KPIDailyRow,
+  KPIProjectRow,
+  KPIProjectTaskRow,
 } from "@/lib/api";
-import { Download, Loader2, Users, Ticket, ClipboardList, Printer, UserRound, Lock } from "lucide-react";
+import { Download, Loader2, Users, Ticket, ClipboardList, Printer, UserRound, Lock, Layers, CheckSquare } from "lucide-react";
+import {
+  LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
 
 const inputClass =
   "w-full rounded-md border border-border bg-card-hover px-3.5 py-2.5 text-sm text-text-primary placeholder-text-muted outline-none transition-all duration-150 focus:border-accent";
@@ -73,6 +82,8 @@ export default function KPIReportPage() {
   // Rincian item analisa & daily task (seluruh staf) — dipakai kartu ringkasan
   // dan daftar rincian di bawah tabel kinerja.
   const [detail, setDetail] = useState<StaffKPIDetailPayload | null>(null);
+  const [ticketTrend, setTicketTrend] = useState<TrendPoint[]>([]);
+  const [dailyTrend, setDailyTrend] = useState<DailyTrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -97,6 +108,19 @@ export default function KPIReportPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Gagal memuat KPI"))
       .finally(() => setLoading(false));
   }, [token, from, to]);
+
+  // Grafik tren memakai endpoint yang sama dengan /reports, dengan staff_id
+  // yang sedang dipilih. Effect terpisah supaya perubahan staff tidak
+  // memuat ulang tabel KPI (dan daftar opsi dropdown tetap utuh).
+  useEffect(() => {
+    if (!token) return;
+    Promise.all([
+      getReportTrend(token, from, to, staffFilter || undefined),
+      getDailyTrend(token, from, to, staffFilter || undefined),
+    ])
+      .then(([tt, dt]) => { setTicketTrend(tt || []); setDailyTrend(dt || []); })
+      .catch(() => { setTicketTrend([]); setDailyTrend([]); });
+  }, [token, from, to, staffFilter]);
 
   const [downloading, setDownloading] = useState<string | null>(null);
 
@@ -298,6 +322,30 @@ export default function KPIReportPage() {
               </p>
               <p className="mt-0.5 text-[11px] text-text-muted">tiket + daily task</p>
             </div>
+            <div className="rounded-md border border-accent/30 bg-accent/5 p-4">
+              <div className="flex items-center gap-2 text-accent">
+                <Layers className="h-3.5 w-3.5" />
+                <p className="text-[11px] uppercase tracking-wide">Project (terpisah)</p>
+              </div>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-accent">
+                {ov?.total_projects ?? 0}
+              </p>
+              <p className="mt-0.5 text-[11px] text-text-muted">
+                {ov?.projects_running ?? 0} berjalan · {ov?.projects_done ?? 0} selesai
+              </p>
+            </div>
+            <div className="rounded-md border border-accent/30 bg-accent/5 p-4">
+              <div className="flex items-center gap-2 text-accent">
+                <CheckSquare className="h-3.5 w-3.5" />
+                <p className="text-[11px] uppercase tracking-wide">Tugas Project Selesai</p>
+              </div>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-accent">
+                {ov?.project_tasks_done ?? 0}
+              </p>
+              <p className="mt-0.5 text-[11px] text-text-muted">
+                dari {ov?.total_project_tasks ?? 0} tugas · {ov?.active_project_members ?? 0} anggota
+              </p>
+            </div>
             <div className="rounded-md border border-border bg-card p-4">
               <div className="flex items-center gap-2 text-text-muted">
                 <ClipboardList className="h-3.5 w-3.5" />
@@ -329,6 +377,46 @@ export default function KPIReportPage() {
               </div>
             </div>
           )}
+
+          {/* Grafik tren — tiket & daily task, ikut filter periode + staf */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-md border border-border bg-card p-4">
+              <p className="mb-3 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Tren Tiket Dibuat vs Diselesaikan
+              </p>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={ticketTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: "#7C8AA3", fontSize: 10 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fill: "#7C8AA3", fontSize: 11 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                  <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1E293B", borderRadius: 8, fontSize: 11 }} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: "#7C8AA3" }} />
+                  <Line type="monotone" dataKey="created" name="Dibuat" stroke="#A78BFA" strokeWidth={2} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="resolved" name="Diselesaikan" stroke="#2DD4BF" strokeWidth={2} dot={{ r: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="rounded-md border border-border bg-card p-4">
+              <p className="mb-3 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Tren Daily Task Dicatat vs Selesai
+              </p>
+              {dailyTrend.length === 0 ? (
+                <div className="flex h-[240px] items-center justify-center text-xs text-text-muted">Belum ada data daily task.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={dailyTrend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: "#7C8AA3", fontSize: 10 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{ fill: "#7C8AA3", fontSize: 11 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                    <Tooltip contentStyle={{ background: "#111827", border: "1px solid #1E293B", borderRadius: 8, fontSize: 11 }} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: "#7C8AA3" }} />
+                    <Line type="monotone" dataKey="created" name="Dicatat" stroke="#38BDF8" strokeWidth={2} dot={{ r: 2 }} />
+                    <Line type="monotone" dataKey="done" name="Selesai" stroke="#34D399" strokeWidth={2} dot={{ r: 2 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
 
           {/* Rincian item — tiket dianalisa & daily task keseluruhan staf */}
           <div className="grid gap-4 lg:grid-cols-2">
@@ -388,6 +476,67 @@ export default function KPIReportPage() {
             </div>
           </div>
 
+          {/* Rincian project — blok terpisah dari tiket & daily task */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="overflow-hidden rounded-md border border-accent/30 bg-card">
+              <p className="border-b border-accent/30 bg-accent/5 px-4 py-3 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-accent">
+                Project Diikuti ({(detail?.details || []).reduce((n, d) => n + (d.projects?.length || 0), 0)})
+              </p>
+              {(detail?.details || []).every((d) => (d.projects?.length || 0) === 0) ? (
+                <p className="px-4 py-8 text-center text-xs text-text-muted">Belum ada project yang diikuti.</p>
+              ) : (
+                <div className="max-h-80 overflow-auto slim-scroll">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-card-hover text-[11px] uppercase text-text-muted">
+                      <tr><th className="px-3 py-2">Kode</th><th className="px-3 py-2">Judul</th><th className="px-3 py-2">Peran</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Task</th></tr>
+                    </thead>
+                    <tbody>
+                      {(detail?.details || []).flatMap((d) =>
+                        (d.projects || []).map((pr: KPIProjectRow, i: number) => (
+                          <tr key={`${d.staff.staff_id}-${pr.ticket_code}-${i}`} className="border-t border-border-subtle">
+                            <td className="px-3 py-2 font-mono text-accent">{pr.ticket_code}</td>
+                            <td className="px-3 py-2 text-text-primary">{pr.title}</td>
+                            <td className="px-3 py-2 text-text-secondary">{pr.member_role === 'pic' ? 'PIC' : 'Anggota'}</td>
+                            <td className="px-3 py-2 text-text-muted">{pr.project_status}</td>
+                            <td className="px-3 py-2 text-text-primary">{pr.tasks_done}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="overflow-hidden rounded-md border border-accent/30 bg-card">
+              <p className="border-b border-accent/30 bg-accent/5 px-4 py-3 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-accent">
+                Tugas Project Selesai ({(detail?.details || []).reduce((n, d) => n + (d.project_tasks?.length || 0), 0)})
+              </p>
+              {(detail?.details || []).every((d) => (d.project_tasks?.length || 0) === 0) ? (
+                <p className="px-4 py-8 text-center text-xs text-text-muted">Belum ada tugas project selesai.</p>
+              ) : (
+                <div className="max-h-80 overflow-auto slim-scroll">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-card-hover text-[11px] uppercase text-text-muted">
+                      <tr><th className="px-3 py-2">Project</th><th className="px-3 py-2">Tugas</th><th className="px-3 py-2">Milestone</th><th className="px-3 py-2">Selesai</th></tr>
+                    </thead>
+                    <tbody>
+                      {(detail?.details || []).flatMap((d) =>
+                        (d.project_tasks || []).map((tr: KPIProjectTaskRow, i: number) => (
+                          <tr key={`${d.staff.staff_id}-${tr.ticket_code}-${tr.title}-${i}`} className="border-t border-border-subtle">
+                            <td className="px-3 py-2 font-mono text-accent">{tr.ticket_code}</td>
+                            <td className="px-3 py-2 text-text-primary">{tr.title}</td>
+                            <td className="px-3 py-2 text-text-secondary">{tr.milestone || '-'}</td>
+                            <td className="px-3 py-2 text-text-muted">{tr.completed_at}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Tabel KPI per staf */}
           <div className="overflow-hidden rounded-md border border-border bg-card">
             <div className="overflow-x-auto">
@@ -407,20 +556,23 @@ export default function KPIReportPage() {
                     <th className="px-3 py-2.5">Avg. Respon Harian</th>
                     <th className="px-3 py-2.5">SLA</th>
                     <th className="px-3 py-2.5">Reopen</th>
+                    <th className="px-3 py-2.5 text-accent">Project Diikuti</th>
+                    <th className="px-3 py-2.5 text-accent">sbg PIC</th>
+                    <th className="px-3 py-2.5 text-accent">Tugas Project</th>
                     <th className="px-3 py-2.5 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={13} className="px-3 py-10 text-center text-text-muted">
+                      <td colSpan={16} className="px-3 py-10 text-center text-text-muted">
                         <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                       </td>
                     </tr>
                   )}
                   {!loading && visibleStaff.length === 0 && (
                     <tr>
-                      <td colSpan={13} className="px-3 py-10 text-center text-text-muted">
+                      <td colSpan={16} className="px-3 py-10 text-center text-text-muted">
                         Belum ada pekerjaan tercatat pada periode ini.
                       </td>
                     </tr>
@@ -464,6 +616,9 @@ export default function KPIReportPage() {
                           </span>
                         </td>
                         <td className="px-3 py-2.5 text-text-secondary">{s.reopen_count}</td>
+                        <td className="px-3 py-2.5 text-accent">{s.project_joined ?? 0}</td>
+                        <td className="px-3 py-2.5 text-accent">{s.project_as_pic ?? 0}</td>
+                        <td className="px-3 py-2.5 text-accent">{s.project_tasks_done ?? 0}</td>
                         <td className="px-3 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-1">
                             <Link

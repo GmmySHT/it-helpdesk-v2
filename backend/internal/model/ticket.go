@@ -4,6 +4,15 @@ import "time"
 
 type TicketStatus string
 
+// TicketType memisahkan tiket regular dari project. Project TIDAK pernah
+// masuk status resolved/closed dan tidak dihitung di KPI/SLA.
+type TicketType string
+
+const (
+	TicketTypeRegular TicketType = "regular"
+	TicketTypeProject TicketType = "project"
+)
+
 const (
 	StatusPendingApproval TicketStatus = "pending_approval"
 	StatusUnassigned      TicketStatus = "unassigned"
@@ -70,6 +79,14 @@ type Ticket struct {
 	SLADeadline    *time.Time `json:"sla_deadline,omitempty"`
 	LastResolvedAt *time.Time `json:"last_resolved_at,omitempty"`
 	ReopenCount    int        `json:"reopen_count"`
+
+	// Project — tiket tipe project dikerjakan banyak orang dengan satu PIC.
+	// Field ini NULL untuk tiket regular (default), sehingga perilaku lama
+	// tidak berubah. Status project memakai enum terpisah, bukan ticket_status.
+	TicketType    TicketType `json:"ticket_type"`
+	ProjectStatus *string    `json:"project_status,omitempty"`
+	StartDate     *time.Time `json:"start_date,omitempty"`
+	TargetDate    *time.Time `json:"target_date,omitempty"`
 
 	SLAReminderSentAt   *time.Time `json:"sla_reminder_sent_at,omitempty"`
 	SLAOverdueNotifiedAt *time.Time `json:"sla_overdue_notified_at,omitempty"`

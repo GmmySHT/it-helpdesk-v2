@@ -40,6 +40,15 @@ type StaffKPI struct {
 	AvgDailyDurationMin float64 `json:"avg_daily_duration_minutes"`
 	AvgDailyResponseMin float64 `json:"avg_daily_response_minutes"`
 
+	// Dari project — dicatat TERPISAH, tidak masuk TotalWorkItems dan tidak
+	// mencampur angka tiket/SLA/response time. Contributions:
+	//   ProjectJoined   = project diikuti (anggota aktif ATAU punya task selesai)
+	//   ProjectAsPIC    = project yang dipimpin sebagai PIC
+	//   ProjectTasksDone = tugas project selesai pada periode ini
+	ProjectJoined    int `json:"project_joined"`
+	ProjectAsPIC     int `json:"project_as_pic"`
+	ProjectTasksDone int `json:"project_tasks_done"`
+
 	// Gabungan — dipakai untuk mengurutkan leaderboard KPI.
 	TotalWorkItems int `json:"total_work_items"`
 }
@@ -54,6 +63,14 @@ type KPIOverview struct {
 	TicketsAnalyzed int `json:"tickets_analyzed"`
 	TotalDailyTasks int `json:"total_daily_tasks"`
 	TotalWorkItems  int `json:"total_work_items"`
+
+	// Ringkasan project — terpisah dari total tiket & daily task.
+	TotalProjects        int `json:"total_projects"`
+	ProjectsRunning      int `json:"projects_running"`
+	ProjectsDone         int `json:"projects_done"`
+	TotalProjectTasks    int `json:"total_project_tasks"`
+	ProjectTasksDone     int `json:"project_tasks_done"`
+	ActiveProjectMembers int `json:"active_project_members"`
 
 	AvgTicketResolutionMinutes float64 `json:"avg_ticket_resolution_minutes"`
 	AvgDailyDurationMinutes    float64 `json:"avg_daily_duration_minutes"`
@@ -102,7 +119,7 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 				AND t.claimed_by IS NOT NULL
 				AND t.claimed_at IS NOT NULL
 				AND t.last_resolved_at IS NOT NULL
-				AND t.deleted_at IS NULL
+				AND t.deleted_at IS NULL AND t.ticket_type = 'regular'
 				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
 			GROUP BY t.claimed_by
@@ -110,7 +127,7 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 		analysis_stats AS (
 			SELECT t.analysis_by AS staff_id, COUNT(*) AS tickets_analyzed
 			FROM tickets t
-			WHERE t.deleted_at IS NULL
+			WHERE t.deleted_at IS NULL AND t.ticket_type = 'regular'
 				AND t.analysis_by IS NOT NULL
 				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
@@ -119,11 +136,48 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 		created_stats AS (
 			SELECT t.created_by AS staff_id, COUNT(*) AS tickets_created
 			FROM tickets t
-			WHERE t.deleted_at IS NULL
+			WHERE t.deleted_at IS NULL AND t.ticket_type = 'regular'
 				AND t.created_by IS NOT NULL
 				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
 			GROUP BY t.created_by
+		),
+		-- Kontribusi project dihitung dari tiga sumber berbeda dan sengaja
+		-- TIDAK digabung ke tiket/daily. task_done memakai completed_at (bukan
+		-- created_at) karena yang dinilai adalah pekerjaan yang SELESAI di
+		-- periode ini; project diikuti/PIC memakai created_at project.
+		project_task_stats AS (
+			SELECT pt.assignee_id AS staff_id, COUNT(*) AS tasks_done
+			FROM project_tasks pt
+			WHERE pt.deleted_at IS NULL
+				AND pt.status = 'done'
+				AND pt.assignee_id IS NOT NULL
+				AND pt.completed_at >= COALESCE($1, '-infinity'::timestamptz)
+				AND pt.completed_at <= COALESCE($2, 'infinity'::timestamptz)
+			GROUP BY pt.assignee_id
+		),
+		project_member_stats AS (
+			SELECT tm.user_id AS staff_id, COUNT(*) AS projects_joined
+			FROM ticket_members tm
+			JOIN tickets t ON t.id = tm.ticket_id
+			WHERE t.ticket_type = 'project'
+				AND t.deleted_at IS NULL
+				AND tm.removed_at IS NULL
+				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
+				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			GROUP BY tm.user_id
+		),
+		project_pic_stats AS (
+			SELECT tm.user_id AS staff_id, COUNT(*) AS projects_as_pic
+			FROM ticket_members tm
+			JOIN tickets t ON t.id = tm.ticket_id
+			WHERE t.ticket_type = 'project'
+				AND t.deleted_at IS NULL
+				AND tm.role = 'pic'
+				AND tm.removed_at IS NULL
+				AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
+				AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			GROUP BY tm.user_id
 		),
 		daily_stats AS (
 			SELECT
@@ -146,12 +200,18 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 			COALESCE(ts.reopens, 0),
 			COALESCE(ds.daily_tasks, 0),
 			COALESCE(ds.avg_duration, 0),
-			COALESCE(ds.avg_response, 0)
+			COALESCE(ds.avg_response, 0),
+			COALESCE(pms.projects_joined, 0),
+			COALESCE(pps.projects_as_pic, 0),
+			COALESCE(pts.tasks_done, 0)
 		FROM users u
 		LEFT JOIN ticket_stats ts ON ts.staff_id = u.id
 		LEFT JOIN analysis_stats as_ ON as_.staff_id = u.id
 		LEFT JOIN created_stats cs ON cs.staff_id = u.id
 		LEFT JOIN daily_stats ds ON ds.staff_id = u.id
+		LEFT JOIN project_task_stats pts ON pts.staff_id = u.id
+		LEFT JOIN project_member_stats pms ON pms.staff_id = u.id
+		LEFT JOIN project_pic_stats pps ON pps.staff_id = u.id
 		WHERE u.is_active = true
 			AND u.deleted_at IS NULL
 			AND u.role::text IN ('it_support', 'analyst', 'programmer', 'devops', 'leader', 'admin')
@@ -159,7 +219,8 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 			-- Staf tanpa pekerjaan sama sekali tidak perlu muncul sebagai baris
 			-- kosong di leaderboard; leader yang tidak menangani tiket juga
 			-- dilewati supaya tabel berisi orang yang benar-benar bekerja.
-			AND (COALESCE(ts.tickets_resolved, 0) > 0 OR COALESCE(ds.daily_tasks, 0) > 0 OR COALESCE(cs.tickets_created, 0) > 0 OR COALESCE(as_.tickets_analyzed, 0) > 0)
+			AND (COALESCE(ts.tickets_resolved, 0) > 0 OR COALESCE(ds.daily_tasks, 0) > 0 OR COALESCE(cs.tickets_created, 0) > 0 OR COALESCE(as_.tickets_analyzed, 0) > 0
+				OR COALESCE(pms.projects_joined, 0) > 0 OR COALESCE(pps.projects_as_pic, 0) > 0 OR COALESCE(pts.tasks_done, 0) > 0)
 			ORDER BY (COALESCE(ts.tickets_resolved, 0) + COALESCE(ds.daily_tasks, 0) + COALESCE(cs.tickets_created, 0) + COALESCE(as_.tickets_analyzed, 0)) DESC, u.name
 	`, from, to, staffFilter)
 	if err != nil {
@@ -175,6 +236,7 @@ func (r *StatsRepository) GetStaffKPIReport(ctx context.Context, from, to *time.
 			&k.TicketsCreated, &k.TicketsAnalyzed,
 			&k.TicketsResolved, &k.AvgResolutionMinutes, &k.SLACompliantCount, &k.ReopenCount,
 			&k.DailyTasks, &k.AvgDailyDurationMin, &k.AvgDailyResponseMin,
+			&k.ProjectJoined, &k.ProjectAsPIC, &k.ProjectTasksDone,
 		); err != nil {
 			return nil, err
 		}
@@ -215,7 +277,7 @@ func (r *StatsRepository) GetKPIOverview(ctx context.Context, from, to *time.Tim
 			COALESCE(AVG(EXTRACT(EPOCH FROM (last_resolved_at - claimed_at)) / 60)
 				FILTER (WHERE last_resolved_at IS NOT NULL AND claimed_at IS NOT NULL), 0)
 		FROM tickets
-		WHERE deleted_at IS NULL
+		WHERE deleted_at IS NULL AND ticket_type = 'regular'
 			AND created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
 			AND ($3::uuid IS NULL OR claimed_by = $3::uuid)
@@ -245,7 +307,7 @@ func (r *StatsRepository) GetKPIOverview(ctx context.Context, from, to *time.Tim
 	err = r.db.QueryRow(ctx, `
 		SELECT COUNT(*)
 		FROM tickets
-		WHERE deleted_at IS NULL
+		WHERE deleted_at IS NULL AND ticket_type = 'regular'
 			AND analysis_by IS NOT NULL
 			AND created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
@@ -256,6 +318,58 @@ func (r *StatsRepository) GetKPIOverview(ctx context.Context, from, to *time.Tim
 	}
 
 	o.TotalWorkItems = o.TotalTickets + o.TotalDailyTasks
+
+	// Ringkasan project. Angka ini sengaja dipisah dari TotalWorkItems —
+	// project tidak boleh mengubah angka KPI tiket lama.
+	err = r.db.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE project_status = 'berjalan'),
+			COUNT(*) FILTER (WHERE project_status IN ('selesai', 'ditutup')),
+			(SELECT COUNT(*) FROM project_tasks pt
+			 WHERE pt.deleted_at IS NULL)
+		FROM tickets
+		WHERE ticket_type = 'project'
+			AND deleted_at IS NULL
+			AND created_at >= COALESCE($1, '-infinity'::timestamptz)
+			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR created_by = $3::uuid OR EXISTS (
+				SELECT 1 FROM ticket_members tm
+				WHERE tm.ticket_id = tickets.id AND tm.user_id = $3::uuid AND tm.removed_at IS NULL
+			))
+	`, from, to, staffFilter).Scan(
+		&o.TotalProjects, &o.ProjectsRunning, &o.ProjectsDone, &o.TotalProjectTasks,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	err = r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM project_tasks pt
+		WHERE pt.deleted_at IS NULL
+			AND pt.status = 'done'
+			AND pt.completed_at >= COALESCE($1, '-infinity'::timestamptz)
+			AND pt.completed_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR pt.assignee_id = $3::uuid)
+	`, from, to, staffFilter).Scan(&o.ProjectTasksDone)
+	if err != nil {
+		return nil, err
+	}
+
+	err = r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM ticket_members tm
+		JOIN tickets t ON t.id = tm.ticket_id
+		WHERE t.ticket_type = 'project' AND t.deleted_at IS NULL
+			AND tm.removed_at IS NULL
+			AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
+			AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
+			AND ($3::uuid IS NULL OR tm.user_id = $3::uuid)
+	`, from, to, staffFilter).Scan(&o.ActiveProjectMembers)
+	if err != nil {
+		return nil, err
+	}
 
 	rows, err := r.db.Query(ctx, `
 		SELECT COALESCE(u.name, '(tanpa unit)'), COUNT(*)

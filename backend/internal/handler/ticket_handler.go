@@ -98,6 +98,7 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		Status:     q.Get("status"),
 		ReporterID: q.Get("reporter_id"),
 		AssigneeID: q.Get("assignee_id"),
+		AtRisk:     q.Get("at_risk") == "1",
 	}
 	userID := r.Context().Value(appmiddleware.ContextUserID).(string)
 	role, _ := r.Context().Value(appmiddleware.ContextRole).(model.UserRole)

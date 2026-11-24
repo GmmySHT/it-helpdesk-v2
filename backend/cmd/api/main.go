@@ -62,7 +62,7 @@ func main() {
 	// hub yang sama ini.
 	hub := ws.NewHub()
 
-	r, ticketService := router.New(pool, simrsPool, hub, router.Options{
+	r, ticketService, projectService := router.New(pool, simrsPool, hub, router.Options{
 		JWTSecret:               cfg.JWTSecret,
 		AllowedOrigins:          cfg.AllowedOrigins,
 		AllowPublicRegistration: cfg.AllowPublicRegistration,
@@ -71,6 +71,7 @@ func main() {
 	// Background job pengingat SLA — jalan di goroutine TERPISAH dari server
 	// HTTP dan berhenti rapi saat ctx dibatalkan.
 	go runSLAReminderScheduler(ctx, time.Duration(cfg.SLACheckMinutes)*time.Minute, ticketService)
+	go runProjectDueScheduler(ctx, 30*time.Minute, projectService)
 
 	// Server dengan timeout: tanpa ini, koneksi yang sengaja dibuat lambat
 	// (slowloris) bisa menghabiskan semua koneksi server. Koneksi WebSocket
@@ -117,6 +118,25 @@ func runSLAReminderScheduler(ctx context.Context, interval time.Duration, ticket
 		case <-ticker.C:
 			if err := ticketService.CheckSLAReminders(ctx); err != nil {
 				log.Printf("sla-reminder: gagal cek reminder: %v", err)
+			}
+		}
+	}
+}
+
+// runProjectDueScheduler menjalankan pengingat tenggat tugas project.
+// Terpisah dari SLA tiket regular; project selesai/draft tidak diproses.
+func runProjectDueScheduler(ctx context.Context, interval time.Duration, projectService interface {
+	CheckProjectTaskDue(ctx context.Context, now time.Time) error
+}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := projectService.CheckProjectTaskDue(ctx, time.Now()); err != nil {
+				log.Printf("project-due-reminder: gagal cek tenggat: %v", err)
 			}
 		}
 	}

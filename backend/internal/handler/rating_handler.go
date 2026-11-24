@@ -79,6 +79,21 @@ func (h *RatingHandler) Create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, rating)
 }
 
+// MyUnrated mengembalikan tiket closed milik pemanggil yang belum dinilai.
+// Ringan, dipakai dashboard pelapor agar tidak perlu N+1 getRating.
+func (h *RatingHandler) MyUnrated(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)
+	list, err := h.ratingRepo.ListUnratedClosedByCreator(r.Context(), userID, 5)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "gagal memuat tiket yang belum dinilai")
+		return
+	}
+	if list == nil {
+		list = []repository.UnratedTicket{}
+	}
+	respondJSON(w, http.StatusOK, list)
+}
+
 func (h *RatingHandler) GetByTicket(w http.ResponseWriter, r *http.Request) {
 	ticketID := chi.URLParam(r, "id")
 	userID, _ := r.Context().Value(appmiddleware.ContextUserID).(string)

@@ -26,6 +26,16 @@ var ErrReopenNeedsReason = errors.New("reopen wajib diisi alasan")
 var ErrOnlyLeaderCanReassign = errors.New("hanya leader/admin yang boleh melakukan reassign paksa")
 var ErrReassignNeedsReason = errors.New("reassign paksa wajib diisi alasan")
 var ErrTicketNotClaimedYet = errors.New("tiket harus berstatus 'claimed' untuk bisa direassign")
+var ErrProjectNotEditableByTicketFlow = errors.New("tiket project tidak bisa diproses lewat alur tiket regular (claim/resolve/reopen/reassign/deadline). Gunakan halaman Project")
+
+// guardNotProject menolak tiket project dari alur tiket regular. Dipanggil
+// di service layer supaya aturan tidak bisa dilewati lewat API langsung.
+func guardNotProject(t *model.Ticket) error {
+	if t.TicketType == "project" {
+		return ErrProjectNotEditableByTicketFlow
+	}
+	return nil
+}
 
 type TicketService struct {
 	db          *pgxpool.Pool
@@ -52,6 +62,18 @@ func NewTicketService(
 		userRepo:    userRepo,
 		notifier:    notifier,
 	}
+}
+
+
+// assertRegular memastikan tiket bukan project sebelum alur regular dijalankan.
+// Dipanggil di awal setiap aksi tiket service layer — bukan di repository —
+// supaya aturan bisa dibaca di satu tempat dan tidak bisa dilewati via API.
+func (s *TicketService) assertRegular(ctx context.Context, ticketID string) error {
+	t, err := s.ticketRepo.FindByID(ctx, ticketID)
+	if err != nil {
+		return err
+	}
+	return guardNotProject(t)
 }
 
 // actorName mengambil nama user untuk disisipkan ke pesan notifikasi
@@ -270,6 +292,10 @@ func (s *TicketService) Claim(ctx context.Context, ticketID, userID string, role
 		return nil, err
 	}
 
+	if err := guardNotProject(ticket); err != nil {
+		return nil, err
+	}
+
 	var claimType model.ClaimType
 	assignedTo := &userID
 
@@ -374,6 +400,9 @@ type ResolveInput struct {
 // karena error di tengah jalan. Kalau salah satu langkah gagal, SEMUA
 // perubahan dibatalkan (rollback), database kembali seperti sebelum resolve dipanggil.
 func (s *TicketService) Resolve(ctx context.Context, input ResolveInput) (*model.Ticket, error) {
+	if err := s.assertRegular(ctx, input.TicketID); err != nil {
+		return nil, err
+	}
 	if input.Message == "" {
 		return nil, errors.New("keterangan resolve wajib diisi")
 	}
@@ -457,6 +486,9 @@ func (s *TicketService) Resolve(ctx context.Context, input ResolveInput) (*model
 // Close menandai tiket selesai secara final. Sesuai flowchart, hanya leader/admin
 // yang boleh close, dan hanya dari status 'resolved' (leader review dulu hasilnya).
 func (s *TicketService) Close(ctx context.Context, ticketID, userID string, role model.UserRole) (*model.Ticket, error) {
+	if err := s.assertRegular(ctx, ticketID); err != nil {
+		return nil, err
+	}
 	if !model.IsSupervisor(role) {
 		return nil, ErrOnlyLeaderCanReview
 	}
@@ -506,6 +538,9 @@ func (s *TicketService) UpdateDetails(ctx context.Context, input UpdateTicketDet
 	if err != nil {
 		return nil, err
 	}
+	if err := guardNotProject(ticket); err != nil {
+		return nil, err
+	}
 	if ticket.Status == model.StatusClosed {
 		return nil, ErrCannotEditClosedTicketDetails
 	}
@@ -520,6 +555,9 @@ func (s *TicketService) UpdateDetails(ctx context.Context, input UpdateTicketDet
 // UpdateAnalysis menyimpan analisa/catatan staf. Hanya role dengan izin edit
 // tiket (analyst/staff IT/leader/admin) yang boleh mengisi.
 func (s *TicketService) UpdateAnalysis(ctx context.Context, ticketID, notes string, required *bool, userID string, role model.UserRole) (*model.Ticket, error) {
+	if err := s.assertRegular(ctx, ticketID); err != nil {
+		return nil, err
+	}
 	if !model.CanEditTicketDetails(role) {
 		return nil, ErrOnlyLeaderCanAssign
 	}
@@ -556,6 +594,9 @@ func (s *TicketService) Reopen(ctx context.Context, input ReopenInput) (*model.T
 
 	ticket, err := s.ticketRepo.FindByID(ctx, input.TicketID)
 	if err != nil {
+		return nil, err
+	}
+	if err := guardNotProject(ticket); err != nil {
 		return nil, err
 	}
 	if ticket.Status != model.StatusResolved {
@@ -641,6 +682,9 @@ func (s *TicketService) Reassign(ctx context.Context, input ReassignInput) (*mod
 
 	ticket, err := s.ticketRepo.FindByID(ctx, input.TicketID)
 	if err != nil {
+		return nil, err
+	}
+	if err := guardNotProject(ticket); err != nil {
 		return nil, err
 	}
 	if ticket.Status != model.StatusClaimed {
@@ -730,6 +774,9 @@ func (s *TicketService) Approve(ctx context.Context, input ApproveInput) (*model
 	if err != nil {
 		return nil, err
 	}
+	if err := guardNotProject(ticket); err != nil {
+		return nil, err
+	}
 	if ticket.Status != model.StatusPendingApproval {
 		return nil, ErrTicketNotPendingApproval
 	}
@@ -809,6 +856,9 @@ func (s *TicketService) Reject(ctx context.Context, input RejectInput) (*model.T
 
 	ticket, err := s.ticketRepo.FindByID(ctx, input.TicketID)
 	if err != nil {
+		return nil, err
+	}
+	if err := guardNotProject(ticket); err != nil {
 		return nil, err
 	}
 	if ticket.Status != model.StatusPendingApproval {
@@ -957,6 +1007,9 @@ func (s *TicketService) UpdateDeadline(ctx context.Context, ticketID, userID str
 
 	ticket, err := s.ticketRepo.FindByID(ctx, ticketID)
 	if err != nil {
+		return nil, err
+	}
+	if err := guardNotProject(ticket); err != nil {
 		return nil, err
 	}
 	if ticket.Status == model.StatusClosed {

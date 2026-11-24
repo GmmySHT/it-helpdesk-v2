@@ -13,17 +13,17 @@ import (
 // dalam satu request supaya angka ringkas dan daftar rincian berasal dari
 // snapshot periode yang sama.
 type KPITicketRow struct {
-	TicketCode   string     `json:"ticket_code"`
-	Title        string     `json:"title"`
-	CategoryName string     `json:"category_name"`
-	Priority     string     `json:"priority"`
-	Status       string     `json:"status"`
-	CreatedByName string    `json:"created_by_name,omitempty"`
-	UpdatedByName string    `json:"updated_by_name,omitempty"`
-	ClaimedAt    *time.Time `json:"claimed_at,omitempty"`
-	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
-	Minutes      float64    `json:"minutes"`
-	SLACompliant bool       `json:"sla_compliant"`
+	TicketCode    string     `json:"ticket_code"`
+	Title         string     `json:"title"`
+	CategoryName  string     `json:"category_name"`
+	Priority      string     `json:"priority"`
+	Status        string     `json:"status"`
+	CreatedByName string     `json:"created_by_name,omitempty"`
+	UpdatedByName string     `json:"updated_by_name,omitempty"`
+	ClaimedAt     *time.Time `json:"claimed_at,omitempty"`
+	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
+	Minutes       float64    `json:"minutes"`
+	SLACompliant  bool       `json:"sla_compliant"`
 }
 
 // KPIDailyRow adalah satu baris rincian daily task pada laporan KPI cetak.
@@ -45,13 +45,36 @@ type KPIDailyRow struct {
 
 // StaffKPIDetail menggabungkan angka ringkas satu staf dengan rincian
 // pekerjaannya — dipakai halaman cetak /reports/kpi/print.
+// KPIProjectRow adalah satu baris rincian keterlibatan project pada laporan
+// KPI cetak. Project tidak masuk rincian tiket — ini blok terpisah.
+type KPIProjectRow struct {
+	TicketCode    string `json:"ticket_code"`
+	Title         string `json:"title"`
+	ProjectStatus string `json:"project_status"`
+	MemberRole    string `json:"member_role"`
+	TasksDone     int    `json:"tasks_done"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// KPIProjectTaskRow adalah rincian tugas project yang diselesaikan staf.
+type KPIProjectTaskRow struct {
+	TicketCode   string `json:"ticket_code"`
+	ProjectTitle string `json:"project_title"`
+	Title        string `json:"title"`
+	Milestone    string `json:"milestone,omitempty"`
+	CompletedAt  string `json:"completed_at"`
+	Weight       int    `json:"weight"`
+}
+
 type StaffKPIDetail struct {
-	Staff           StaffKPI       `json:"staff"`
-	Tickets         []KPITicketRow `json:"tickets"`
+	Staff   StaffKPI       `json:"staff"`
+	Tickets []KPITicketRow `json:"tickets"`
 	// AnalyzedTickets = rincian tiket yang dianalisa staf ini. Untuk analyst
 	// yang tidak mengklaim tiket, ini satu-satunya bukti kontribusinya.
-	AnalyzedTickets []KPITicketRow `json:"analyzed_tickets"`
-	DailyTasks      []KPIDailyRow  `json:"daily_tasks"`
+	AnalyzedTickets []KPITicketRow      `json:"analyzed_tickets"`
+	DailyTasks      []KPIDailyRow       `json:"daily_tasks"`
+	Projects        []KPIProjectRow     `json:"projects"`
+	ProjectTasks    []KPIProjectTaskRow `json:"project_tasks"`
 }
 
 // GetStaffKPIDetail mengembalikan ringkasan + rincian pekerjaan per staf.
@@ -69,10 +92,12 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 	out := make([]StaffKPIDetail, 0, len(summary))
 	for _, s := range summary {
 		detail := StaffKPIDetail{
-			Staff:      s,
+			Staff:           s,
 			Tickets:         []KPITicketRow{},
 			AnalyzedTickets: []KPITicketRow{},
 			DailyTasks:      []KPIDailyRow{},
+			Projects:        []KPIProjectRow{},
+			ProjectTasks:    []KPIProjectTaskRow{},
 		}
 
 		tRows, err := r.db.Query(ctx, `
@@ -97,6 +122,7 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 			LEFT JOIN users creator ON creator.id = t.created_by
 			LEFT JOIN users updater ON updater.id = t.updated_by
 			WHERE t.claimed_by = $1::uuid
+				AND t.ticket_type = 'regular'
 				AND t.status IN ('resolved', 'closed')
 				AND t.claimed_at IS NOT NULL
 				AND t.last_resolved_at IS NOT NULL
@@ -147,6 +173,7 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 			LEFT JOIN users creator ON creator.id = t.created_by
 			LEFT JOIN users updater ON updater.id = t.updated_by
 			WHERE t.analysis_by = $1::uuid
+				AND t.ticket_type = 'regular'
 				AND t.deleted_at IS NULL
 				AND t.created_at >= COALESCE($2, '-infinity'::timestamptz)
 				AND t.created_at <= COALESCE($3, 'infinity'::timestamptz)
@@ -210,6 +237,85 @@ func (r *StatsRepository) GetStaffKPIDetail(ctx context.Context, from, to *time.
 		}
 		dRows.Close()
 		if err := dRows.Err(); err != nil {
+			return nil, err
+		}
+
+		// Rincian project — blok terpisah dari tiket/daily task. Diambil dari
+		// ticket_members (keanggotaan aktif pada periode project dibuat) dan
+		// project_tasks yang completed_at-nya jatuh pada periode laporan.
+		pRows, err := r.db.Query(ctx, `
+			SELECT
+				COALESCE(t.ticket_code, t.id::text),
+				t.title,
+				COALESCE(t.project_status, '-'),
+				tm.role,
+				(SELECT COUNT(*) FROM project_tasks pt
+				 WHERE pt.ticket_id = t.id AND pt.assignee_id = $1::uuid
+				   AND pt.deleted_at IS NULL AND pt.status = 'done'),
+				to_char(t.created_at, 'DD Mon YYYY')
+			FROM ticket_members tm
+			JOIN tickets t ON t.id = tm.ticket_id
+			WHERE tm.user_id = $1::uuid
+				AND t.ticket_type = 'project'
+				AND t.deleted_at IS NULL
+				AND tm.removed_at IS NULL
+				AND t.created_at >= COALESCE($2, '-infinity'::timestamptz)
+				AND t.created_at <= COALESCE($3, 'infinity'::timestamptz)
+			ORDER BY t.created_at ASC
+		`, s.StaffID, from, to)
+		if err != nil {
+			return nil, err
+		}
+		for pRows.Next() {
+			var pr KPIProjectRow
+			if err := pRows.Scan(
+				&pr.TicketCode, &pr.Title, &pr.ProjectStatus,
+				&pr.MemberRole, &pr.TasksDone, &pr.CreatedAt,
+			); err != nil {
+				pRows.Close()
+				return nil, err
+			}
+			detail.Projects = append(detail.Projects, pr)
+		}
+		pRows.Close()
+		if err := pRows.Err(); err != nil {
+			return nil, err
+		}
+
+		ptRows, err := r.db.Query(ctx, `
+			SELECT
+				COALESCE(t.ticket_code, t.id::text),
+				t.title,
+				pt.title,
+				COALESCE(pm.title, ''),
+				to_char(pt.completed_at, 'DD Mon YYYY'),
+				pt.weight
+			FROM project_tasks pt
+			JOIN tickets t ON t.id = pt.ticket_id
+			LEFT JOIN project_milestones pm ON pm.id = pt.milestone_id
+			WHERE pt.assignee_id = $1::uuid
+				AND pt.deleted_at IS NULL
+				AND pt.status = 'done'
+				AND pt.completed_at >= COALESCE($2, '-infinity'::timestamptz)
+				AND pt.completed_at <= COALESCE($3, 'infinity'::timestamptz)
+			ORDER BY pt.completed_at ASC
+		`, s.StaffID, from, to)
+		if err != nil {
+			return nil, err
+		}
+		for ptRows.Next() {
+			var tr KPIProjectTaskRow
+			if err := ptRows.Scan(
+				&tr.TicketCode, &tr.ProjectTitle, &tr.Title,
+				&tr.Milestone, &tr.CompletedAt, &tr.Weight,
+			); err != nil {
+				ptRows.Close()
+				return nil, err
+			}
+			detail.ProjectTasks = append(detail.ProjectTasks, tr)
+		}
+		ptRows.Close()
+		if err := ptRows.Err(); err != nil {
 			return nil, err
 		}
 

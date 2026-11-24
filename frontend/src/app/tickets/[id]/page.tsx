@@ -398,6 +398,9 @@ export default function TicketDetailPage() {
           title={ticket.title}
           subtitle={`${ticket.ticket_code ? ticket.ticket_code + " · " : ""}${STATUS_LABEL[ticket.status]}`}
           actions={[
+            ...(ticket.ticket_type === "project"
+              ? [{ label: "Buka Project", href: `/project/${ticket.id}`, variant: "primary" as const }]
+              : []),
             // Cetak BAST hanya untuk yang MENERBITKAN dokumen (staf IT/leader/
             // admin). Pelapor tidak boleh mencetak sendiri — dokumen resmi
             // yang dia pegang adalah hasil scan bertanda tangan yang di-upload

@@ -26,6 +26,100 @@ type StatsSummary struct {
 
 	AvgRatingScore float64 `json:"avg_rating_score"`
 	TotalRatings   int     `json:"total_ratings"`
+
+	// Period & Previous hanya terisi bila handler menerima ?days=N. Nil
+	// berarti periode tidak diminta ATAU tidak ada data pada periode itu —
+	// dibedakan lewat *float64 per metrik supaya delta tidak menyesatkan.
+	Period   *PeriodStats `json:"period,omitempty"`
+	Previous *PeriodStats `json:"previous,omitempty"`
+}
+
+// PeriodStats adalah potongan metrik untuk satu rentang waktu. Metrik yang
+// penyebutnya nol disimpan nil (bukan 0) karena 0 berarti "benar-benar nol",
+// sedangkan nil berarti "tidak ada data pembanding".
+type PeriodStats struct {
+	TotalTickets         int      `json:"total_tickets"`
+	SLACompliance        *float64 `json:"sla_compliance"`
+	AvgResolutionMinutes *float64 `json:"avg_resolution_minutes"`
+	AvgRating            *float64 `json:"avg_rating"`
+}
+
+// GetSummaryPeriod menghitung metrik ringkas untuk satu rentang waktu.
+// Rumusnya SAMA dengan GetSummary — bedanya hanya penambahan filter rentang,
+// jadi angka periode pada dasarnya konsisten dengan angka utama.
+//
+// Titik acuan tiap metrik mengikuti metrik aslinya:
+//   - total_tickets      -> created_at (tiket dibuat pada rentang itu)
+//   - sla_compliance     -> last_resolved_at (tiket selesai pada rentang itu)
+//   - avg_resolution     -> last_resolved_at
+//   - avg_rating         -> ratings.created_at
+//
+// Metrik tanpa data dikembalikan nil supaya frontend bisa membedakan
+// "belum ada data" dari "benar-benar 0" saat menghitung delta.
+func (r *StatsRepository) GetSummaryPeriod(ctx context.Context, from, to time.Time) (PeriodStats, error) {
+	out := PeriodStats{}
+
+	err := r.db.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tickets
+		WHERE deleted_at IS NULL AND ticket_type = 'regular'
+		  AND created_at >= $1 AND created_at < $2
+	`, from, to).Scan(&out.TotalTickets)
+	if err != nil {
+		return out, err
+	}
+
+	var resolvedDenom, resolvedInSLA int
+	err = r.db.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (
+				WHERE t.status IN ('resolved', 'closed')
+				AND t.claimed_at IS NOT NULL AND sr.resolution_time_minutes IS NOT NULL
+			),
+			COUNT(*) FILTER (
+				WHERE t.status IN ('resolved', 'closed')
+				AND t.claimed_at IS NOT NULL AND sr.resolution_time_minutes IS NOT NULL
+				AND t.last_resolved_at <= t.claimed_at + (sr.resolution_time_minutes || ' minutes')::interval
+			)
+		FROM tickets t
+		LEFT JOIN sla_rules sr ON sr.category_id = t.category_id AND sr.priority = t.priority
+		WHERE t.deleted_at IS NULL AND t.ticket_type = 'regular'
+		  AND t.last_resolved_at IS NOT NULL
+		  AND t.last_resolved_at >= $1 AND t.last_resolved_at < $2
+	`, from, to).Scan(&resolvedDenom, &resolvedInSLA)
+	if err != nil {
+		return out, err
+	}
+	if resolvedDenom > 0 {
+		pct := float64(resolvedInSLA) * 100 / float64(resolvedDenom)
+		out.SLACompliance = &pct
+	}
+
+	var avgResolution *float64
+	err = r.db.QueryRow(ctx, `
+		SELECT AVG(EXTRACT(EPOCH FROM (last_resolved_at - claimed_at)) / 60)
+		FROM tickets
+		WHERE last_resolved_at IS NOT NULL AND claimed_at IS NOT NULL
+		  AND deleted_at IS NULL AND ticket_type = 'regular'
+		  AND last_resolved_at >= $1 AND last_resolved_at < $2
+	`, from, to).Scan(&avgResolution)
+	if err != nil {
+		return out, err
+	}
+	out.AvgResolutionMinutes = avgResolution
+
+	var avgRating *float64
+	err = r.db.QueryRow(ctx, `
+		SELECT AVG(score)
+		FROM ratings
+		WHERE created_at >= $1 AND created_at < $2
+	`, from, to).Scan(&avgRating)
+	if err != nil {
+		return out, err
+	}
+	out.AvgRating = avgRating
+
+	return out, nil
 }
 
 // StaffPerformance adalah ringkasan kecepatan kerja SATU staf — dipakai
@@ -145,7 +239,7 @@ func (r *StatsRepository) GetStaffPerformance(ctx context.Context) ([]StaffPerfo
 		JOIN users u ON u.id = t.claimed_by
 		LEFT JOIN sla_rules sr ON sr.category_id = t.category_id AND sr.priority = t.priority
 		WHERE t.status IN ('resolved', 'closed') AND t.claimed_at IS NOT NULL AND t.last_resolved_at IS NOT NULL
-			AND t.deleted_at IS NULL
+			AND t.deleted_at IS NULL AND t.ticket_type = 'regular'
 		GROUP BY u.id, u.name
 		ORDER BY tickets_resolved DESC
 	`)
@@ -195,7 +289,7 @@ func (r *StatsRepository) GetStaffPerformanceRange(ctx context.Context, from, to
 		JOIN users u ON u.id = t.claimed_by
 		LEFT JOIN sla_rules sr ON sr.category_id = t.category_id AND sr.priority = t.priority
 		WHERE t.status IN ('resolved', 'closed') AND t.claimed_at IS NOT NULL AND t.last_resolved_at IS NOT NULL
-			AND t.deleted_at IS NULL
+			AND t.deleted_at IS NULL AND t.ticket_type = 'regular'
 			AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
 			AND ($3::uuid IS NULL OR t.claimed_by = $3::uuid)
@@ -258,7 +352,7 @@ func (r *StatsRepository) GetStaffPerformanceForUser(ctx context.Context, userID
 func (r *StatsRepository) CurrentWorkload(ctx context.Context, userID string) (int, error) {
 	var count int
 	err := r.db.QueryRow(ctx, `
-		SELECT COUNT(*) FROM tickets WHERE claimed_by = $1 AND status = 'claimed' AND deleted_at IS NULL
+		SELECT COUNT(*) FROM tickets WHERE claimed_by = $1 AND status = 'claimed' AND deleted_at IS NULL AND ticket_type = 'regular'
 	`, userID).Scan(&count)
 	return count, err
 }
@@ -269,7 +363,7 @@ func (r *StatsRepository) CurrentWorkload(ctx context.Context, userID string) (i
 // statistik perusahaan yang tidak relevan buatnya.
 func (r *StatsRepository) CreatorTicketCounts(ctx context.Context, userID string) (map[string]int, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT status, COUNT(*) FROM tickets WHERE created_by = $1 AND deleted_at IS NULL GROUP BY status
+		SELECT status, COUNT(*) FROM tickets WHERE created_by = $1 AND deleted_at IS NULL AND ticket_type = 'regular' GROUP BY status
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -296,6 +390,58 @@ type TrendPoint struct {
 	Resolved int    `json:"resolved"`
 }
 
+// DailyTrendPoint = satu titik tren harian daily task (dibuat vs selesai),
+// dipakai grafik "Tren Daily Task" di laporan & KPI.
+type DailyTrendPoint struct {
+	Date    string `json:"date"`
+	Created int    `json:"created"`
+	Done    int    `json:"done"`
+}
+
+// GetDailyTrendRange menghitung jumlah daily task per hari dengan
+// generate_series supaya hari kosong tetap jadi titik 0. Pole created_by
+// dipakai untuk filter staf (sama dengan scope KPI), bukan reporter_name.
+func (r *StatsRepository) GetDailyTrendRange(ctx context.Context, from, to time.Time, staffID string) ([]DailyTrendPoint, error) {
+	var staffFilter interface{}
+	if staffID != "" {
+		staffFilter = staffID
+	}
+
+	rows, err := r.db.Query(ctx, `
+		WITH date_series AS (
+			SELECT generate_series($1::date, $2::date, '1 day'::interval)::date AS day
+		)
+		SELECT
+			ds.day,
+			COUNT(DISTINCT dt.id) FILTER (WHERE dt.task_date = ds.day) AS created_count,
+			COUNT(DISTINCT dt.id) FILTER (WHERE dt.end_at IS NOT NULL AND dt.end_at::date = ds.day) AS done_count
+		FROM date_series ds
+		LEFT JOIN daily_tasks dt ON (
+				dt.task_date = ds.day
+				OR (dt.end_at IS NOT NULL AND dt.end_at::date = ds.day)
+			)
+			AND ($3::uuid IS NULL OR dt.created_by = $3::uuid)
+		GROUP BY ds.day
+		ORDER BY ds.day
+	`, from, to, staffFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []DailyTrendPoint
+	for rows.Next() {
+		var day time.Time
+		var p DailyTrendPoint
+		if err := rows.Scan(&day, &p.Created, &p.Done); err != nil {
+			return nil, err
+		}
+		p.Date = day.Format("02 Jan")
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
 // GetTrend mengambil N hari terakhir, DIISI PENUH walau tidak ada data
 // (generate_series) — supaya grafiknya tidak bolong-bolong di hari yang
 // kebetulan nol aktivitas.
@@ -303,8 +449,8 @@ func (r *StatsRepository) GetTrend(ctx context.Context, days int) ([]TrendPoint,
 	rows, err := r.db.Query(ctx, `
 		WITH date_series AS (
 			SELECT generate_series(
-				CURRENT_DATE - ($1::int - 1),
-				CURRENT_DATE,
+				((now() AT TIME ZONE 'Asia/Jakarta')::date - ($1::int - 1)),
+				((now() AT TIME ZONE 'Asia/Jakarta')::date),
 				'1 day'::interval
 			)::date AS day
 		)
@@ -313,8 +459,8 @@ func (r *StatsRepository) GetTrend(ctx context.Context, days int) ([]TrendPoint,
 			COUNT(DISTINCT t1.id) AS created_count,
 			COUNT(DISTINCT t2.id) AS resolved_count
 		FROM date_series ds
-		LEFT JOIN tickets t1 ON t1.created_at::date = ds.day AND t1.deleted_at IS NULL
-		LEFT JOIN tickets t2 ON t2.last_resolved_at::date = ds.day AND t2.deleted_at IS NULL
+		LEFT JOIN tickets t1 ON (t1.created_at AT TIME ZONE 'Asia/Jakarta')::date = ds.day AND t1.deleted_at IS NULL
+		LEFT JOIN tickets t2 ON (t2.last_resolved_at AT TIME ZONE 'Asia/Jakarta')::date = ds.day AND t2.deleted_at IS NULL
 		GROUP BY ds.day
 		ORDER BY ds.day
 	`, days)
@@ -341,7 +487,7 @@ func (r *StatsRepository) GetTrend(ctx context.Context, days int) ([]TrendPoint,
 // personal di dashboard staf.
 func (r *StatsRepository) MyStatusBreakdown(ctx context.Context, userID string) (map[string]int, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT status, COUNT(*) FROM tickets WHERE claimed_by = $1 AND deleted_at IS NULL GROUP BY status
+		SELECT status, COUNT(*) FROM tickets WHERE claimed_by = $1 AND deleted_at IS NULL AND ticket_type = 'regular' GROUP BY status
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -376,7 +522,7 @@ func (r *StatsRepository) GetSummary(ctx context.Context) (*StatsSummary, error)
 	summary := &StatsSummary{ByStatus: map[string]int{}}
 
 	// 1. Jumlah tiket per status
-	rows, err := r.db.Query(ctx, `SELECT status, COUNT(*) FROM tickets WHERE deleted_at IS NULL GROUP BY status`)
+	rows, err := r.db.Query(ctx, `SELECT status, COUNT(*) FROM tickets WHERE deleted_at IS NULL AND ticket_type = 'regular' GROUP BY status`)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +560,7 @@ func (r *StatsRepository) GetSummary(ctx context.Context) (*StatsSummary, error)
 			)
 		FROM tickets t
 		LEFT JOIN sla_rules sr ON sr.category_id = t.category_id AND sr.priority = t.priority
-		WHERE t.deleted_at IS NULL
+		WHERE t.deleted_at IS NULL AND t.ticket_type = 'regular'
 	`).Scan(&summary.TotalResolvedOrClosed, &summary.WithinSLACount)
 	if err != nil {
 		return nil, err
@@ -426,7 +572,7 @@ func (r *StatsRepository) GetSummary(ctx context.Context) (*StatsSummary, error)
 	err = r.db.QueryRow(ctx, `
 		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (last_resolved_at - claimed_at)) / 60), 0)
 		FROM tickets
-		WHERE last_resolved_at IS NOT NULL AND claimed_at IS NOT NULL AND deleted_at IS NULL
+		WHERE last_resolved_at IS NOT NULL AND claimed_at IS NOT NULL AND deleted_at IS NULL AND ticket_type = 'regular'
 	`).Scan(&summary.AvgResolutionMinutes)
 	if err != nil {
 		return nil, err
@@ -487,7 +633,7 @@ func (r *StatsRepository) GetKPIReport(ctx context.Context, from, to *time.Time,
 			COALESCE(AVG(EXTRACT(EPOCH FROM (claimed_at - created_at)) / 60) FILTER (WHERE claimed_at IS NOT NULL), 0),
 			COALESCE(AVG(EXTRACT(EPOCH FROM (last_resolved_at - claimed_at)) / 60) FILTER (WHERE last_resolved_at IS NOT NULL AND claimed_at IS NOT NULL), 0)
 		FROM tickets
-		WHERE deleted_at IS NULL
+		WHERE deleted_at IS NULL AND ticket_type = 'regular'
 			AND created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
 			AND ($3::uuid IS NULL OR claimed_by = $3::uuid)
@@ -557,7 +703,7 @@ func (r *StatsRepository) GetPriorityBreakdown(ctx context.Context, from, to *ti
 	rows, err := r.db.Query(ctx, `
 		SELECT priority, COUNT(*)
 		FROM tickets
-		WHERE deleted_at IS NULL
+		WHERE deleted_at IS NULL AND ticket_type = 'regular'
 			AND created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND created_at <= COALESCE($2, 'infinity'::timestamptz)
 			AND ($3::uuid IS NULL OR claimed_by = $3::uuid)
@@ -598,7 +744,7 @@ func (r *StatsRepository) GetCategoryBreakdown(ctx context.Context, from, to *ti
 		SELECT c.name, COUNT(t.id)
 		FROM tickets t
 		JOIN categories c ON c.id = t.category_id
-		WHERE t.deleted_at IS NULL
+		WHERE t.deleted_at IS NULL AND t.ticket_type = 'regular'
 			AND t.created_at >= COALESCE($1, '-infinity'::timestamptz)
 			AND t.created_at <= COALESCE($2, 'infinity'::timestamptz)
 			AND ($3::uuid IS NULL OR t.claimed_by = $3::uuid)
@@ -628,18 +774,18 @@ func (r *StatsRepository) GetMyTrend(ctx context.Context, userID string, days in
 	rows, err := r.db.Query(ctx, `
 		WITH date_series AS (
 			SELECT generate_series(
-				CURRENT_DATE - ($1::int - 1),
-				CURRENT_DATE,
+				((now() AT TIME ZONE 'Asia/Jakarta')::date - ($1::int - 1)),
+				((now() AT TIME ZONE 'Asia/Jakarta')::date),
 				'1 day'::interval
 			)::date AS day
 		)
 		SELECT
 			ds.day,
-			COUNT(DISTINCT t1.id) AS claimed_count,
+			COUNT(DISTINCT t1.id) AS created_count,
 			COUNT(DISTINCT t2.id) AS resolved_count
 		FROM date_series ds
-		LEFT JOIN tickets t1 ON t1.claimed_at::date = ds.day AND t1.claimed_by = $2 AND t1.deleted_at IS NULL
-		LEFT JOIN tickets t2 ON t2.last_resolved_at::date = ds.day AND t2.claimed_by = $2 AND t2.deleted_at IS NULL
+		LEFT JOIN tickets t1 ON (t1.created_at AT TIME ZONE 'Asia/Jakarta')::date = ds.day AND t1.claimed_by = $2 AND t1.deleted_at IS NULL
+		LEFT JOIN tickets t2 ON (t2.last_resolved_at AT TIME ZONE 'Asia/Jakarta')::date = ds.day AND t2.claimed_by = $2 AND t2.deleted_at IS NULL
 		GROUP BY ds.day
 		ORDER BY ds.day
 	`, days, userID)
@@ -666,7 +812,7 @@ func (r *StatsRepository) GetMyTrend(ctx context.Context, userID string, days in
 // lebih banyak menangani tiket ringan atau justru yang mendesak.
 func (r *StatsRepository) GetMyPriorityBreakdown(ctx context.Context, userID string) (map[string]int, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT priority, COUNT(*) FROM tickets WHERE claimed_by = $1 AND deleted_at IS NULL GROUP BY priority
+		SELECT priority, COUNT(*) FROM tickets WHERE claimed_by = $1 AND deleted_at IS NULL AND ticket_type = 'regular' GROUP BY priority
 	`, userID)
 	if err != nil {
 		return nil, err

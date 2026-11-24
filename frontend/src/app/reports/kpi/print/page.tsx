@@ -18,6 +18,7 @@
  */
 
 import { Suspense, useEffect, useState } from "react";
+import ReportLetterhead from "@/components/report-letterhead";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Lock } from "lucide-react";
@@ -28,10 +29,11 @@ import {
   StaffKPIDetail,
   KPITicketRow,
   KPIDailyRow,
+  KPIProjectRow,
+  KPIProjectTaskRow,
+  listCoordinators,
 } from "@/lib/api";
-
-const INSTITUTION_NAME =
-  process.env.NEXT_PUBLIC_INSTITUTION_NAME || "Rumah Sakit — Unit IT / SIMRS";
+import { INSTITUTION_ADDRESS, INSTITUTION_CONTACT } from "@/lib/institution";
 
 const ROLE_LABEL: Record<string, string> = {
   it_support: "IT Support",
@@ -119,9 +121,27 @@ function KpiPrintInner() {
   // yang punya pekerjaan di periode itu yang perlu muncul di dropdown.
   const [staffOptions, setStaffOptions] = useState<StaffKPIDetail[]>([]);
 
+  // Leader IT diambil dari role leader di sistem, bukan nama hardcode.
+  const [leaderName, setLeaderName] = useState("");
+
   useEffect(() => {
     if (!isLoading && !user) router.push("/login");
   }, [isLoading, user, router]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    listCoordinators(token)
+      .then((users) => {
+        if (!cancelled && users.length) setLeaderName(users[0].name);
+      })
+      .catch(() => {
+        /* leader belum ada — kolom TTD tetap kosong */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   // Daftar pilihan staf harus tetap lengkap meskipun laporan sedang difilter
   // ke satu orang. Kalau diambil dari respons yang sudah difilter, dropdown
@@ -262,6 +282,7 @@ function KpiPrintInner() {
             period={{ from, to }}
             pageBreak={idx > 0}
             docIndex={idx}
+            leaderName={leaderName}
           />
         ))}
       </main>
@@ -274,16 +295,20 @@ function StaffSection({
   period,
   pageBreak,
   docIndex,
+  leaderName,
 }: {
   detail: StaffKPIDetail;
   period: { from: string; to: string };
   pageBreak: boolean;
   docIndex: number;
+  leaderName: string;
 }) {
   const s = detail.staff;
   const tickets = detail.tickets || [];
   const analyzed = detail.analyzed_tickets || [];
   const dailies = detail.daily_tasks || [];
+  const projects = detail.projects || [];
+  const projectTasks = detail.project_tasks || [];
 
   const periode =
     period.from && period.to
@@ -296,13 +321,12 @@ function StaffSection({
 
   return (
     <section className={pageBreak ? "print:break-before-page mb-10" : "mb-10"}>
-      {/* Kop dokumen */}
-      <div className="mb-5 border-b-2 border-black pb-3 text-center">
-        <h1 className="text-base font-bold uppercase tracking-wide">
-          Laporan Kinerja (KPI) Staf IT
-        </h1>
-        <p className="mt-1 text-sm">{INSTITUTION_NAME}</p>
-      </div>
+      {/* Kop dokumen formal — logo instansi + identitas + garis ganda */}
+      <ReportLetterhead
+        title="Laporan Kinerja (KPI) Staf IT"
+        address={INSTITUTION_ADDRESS}
+        contact={INSTITUTION_CONTACT}
+      />
 
       {/* Blok identitas dokumen — format laporan formal */}
       <table className="mb-5 w-full border-collapse text-xs">
@@ -402,6 +426,24 @@ function StaffSection({
             <td className="border border-neutral-300 px-3 py-1.5">Tiket reopen</td>
             <td className="border border-neutral-300 px-3 py-1.5 font-semibold">
               {s.reopen_count} kali
+            </td>
+          </tr>
+          <tr className="bg-neutral-50">
+            <td className="border border-neutral-300 px-3 py-1.5">Project diikuti</td>
+            <td className="border border-neutral-300 px-3 py-1.5 font-semibold">
+              {s.project_joined ?? 0} project
+            </td>
+            <td className="border border-neutral-300 px-3 py-1.5">Project sebagai PIC</td>
+            <td className="border border-neutral-300 px-3 py-1.5 font-semibold">
+              {s.project_as_pic ?? 0} project
+            </td>
+          </tr>
+          <tr className="bg-neutral-50">
+            <td className="border border-neutral-300 px-3 py-1.5" colSpan={2}>
+              Tugas project selesai (terpisah dari tiket)
+            </td>
+            <td className="border border-neutral-300 px-3 py-1.5 font-semibold" colSpan={2}>
+              {s.project_tasks_done ?? 0} tugas
             </td>
           </tr>
         </tbody>
@@ -571,18 +613,90 @@ function StaffSection({
         </table>
       )}
 
+      {/* Rincian project — kontribusi project dicatat terpisah dari tiket. */}
+      <h2 className="mb-1.5 text-sm font-bold uppercase tracking-wide">
+        D. Rincian Project Diikuti ({projects.length})
+      </h2>
+      {projects.length === 0 ? (
+        <p className="mb-5 border border-neutral-300 px-3 py-2 text-sm text-neutral-600">
+          Tidak ada project pada periode ini.
+        </p>
+      ) : (
+        <table className="mb-5 w-full border-collapse text-[11px]">
+          <thead>
+            <tr className="bg-neutral-100">
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">No</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Kode</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Judul Project</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Peran</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Status</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-right">Task Selesai</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map((pr: KPIProjectRow, i: number) => (
+              <tr key={`${pr.ticket_code}-${i}`}>
+                <td className="border border-neutral-300 px-2 py-1.5">{i + 1}</td>
+                <td className="border border-neutral-300 px-2 py-1.5 font-mono">{pr.ticket_code}</td>
+                <td className="border border-neutral-300 px-2 py-1.5">{pr.title}</td>
+                <td className="border border-neutral-300 px-2 py-1.5">
+                  {pr.member_role === 'pic' ? 'PIC' : 'Anggota'}
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">{pr.project_status}</td>
+                <td className="border border-neutral-300 px-2 py-1.5 text-right">{pr.tasks_done}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h2 className="mb-1.5 text-sm font-bold uppercase tracking-wide">
+        E. Rincian Tugas Project Selesai ({projectTasks.length})
+      </h2>
+      {projectTasks.length === 0 ? (
+        <p className="mb-5 border border-neutral-300 px-3 py-2 text-sm text-neutral-600">
+          Tidak ada tugas project selesai pada periode ini.
+        </p>
+      ) : (
+        <table className="mb-5 w-full border-collapse text-[11px]">
+          <thead>
+            <tr className="bg-neutral-100">
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">No</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Project</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Tugas</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Milestone</th>
+              <th className="border border-neutral-300 px-2 py-1.5 text-left">Selesai</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projectTasks.map((tr: KPIProjectTaskRow, i: number) => (
+              <tr key={`${tr.ticket_code}-${tr.title}-${i}`}>
+                <td className="border border-neutral-300 px-2 py-1.5">{i + 1}</td>
+                <td className="border border-neutral-300 px-2 py-1.5 font-mono">
+                  {tr.ticket_code}
+                  <span className="block text-[10px] text-neutral-600">{tr.project_title}</span>
+                </td>
+                <td className="border border-neutral-300 px-2 py-1.5">{tr.title}</td>
+                <td className="border border-neutral-300 px-2 py-1.5">{tr.milestone || "-"}</td>
+                <td className="border border-neutral-300 px-2 py-1.5">{formatDate(tr.completed_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
       {/* Tanda tangan — Leader IT mengetahui, Direktur RS menetapkan. */}
       <div className="mt-8 grid grid-cols-2 gap-10 text-center text-sm">
         <div>
-          <p className="mb-16">Mengetahui, Leader IT</p>
+          <p className="mb-32">Mengetahui, Leader IT</p>
           <p className="border-t border-black pt-1 font-semibold">
-            (...........................)
+            {leaderName || "(...........................)"}
           </p>
         </div>
         <div>
-          <p className="mb-16">Menetapkan, Direktur RS</p>
+          <p className="mb-32">Menetapkan, Direktur RS</p>
           <p className="border-t border-black pt-1 font-semibold">
-            (...........................)
+            ...........................
           </p>
         </div>
       </div>
@@ -590,7 +704,8 @@ function StaffSection({
       <p className="mt-8 border-t border-neutral-300 pt-2 text-[10px] text-neutral-500">
         Dokumen ini dicetak dari sistem pada {new Date().toLocaleString("id-ID")}. Angka
         ringkasan dihitung dari tiket yang diklaim staf dan daily task yang dicatatnya pada
-        periode tersebut.
+        periode tersebut. Kontribusi project (bagian D dan E) dicatat terpisah dan tidak
+        dimasukkan ke angka tiket, SLA, maupun waktu respon.
       </p>
     </section>
   );

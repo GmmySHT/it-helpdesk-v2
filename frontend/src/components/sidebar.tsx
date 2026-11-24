@@ -49,6 +49,14 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: "Tiket", href: "/tickets", icon: "ticket", group: "Utama" },
   {
+    // Project = tiket bertipe project (milestone & task), modul RBAC "project".
+    label: "Project",
+    href: "/project",
+    icon: "layers",
+    group: "Utama",
+    moduleCode: "project",
+  },
+  {
     // Daily Task = pekerjaan harian kecil dari WhatsApp; masuk KPI staf.
     label: "Daily Task",
     href: "/daily-tasks",
@@ -162,6 +170,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   tag: '<path d="M20.6 13.6 12 22.2 2 12.2V3h9.2l9.4 9.4a1.5 1.5 0 0 1 0 2.2z"/><circle cx="7" cy="7" r="1.4"/>',
+  layers: '<path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5M3 17l9 5 9-5"/>',
 } as const;
 
 type IconName = keyof typeof ICONS;

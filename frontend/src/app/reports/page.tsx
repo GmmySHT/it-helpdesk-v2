@@ -24,6 +24,7 @@ import {
   getKPIReport,
   getMyPermissions,
   getReportTrend,
+  getDailyTrend,
   getPriorityBreakdown,
   getCategoryBreakdown,
   getReportStaffPerformance,
@@ -31,6 +32,7 @@ import {
   listCategories,
   KPIReport,
   TrendPoint,
+  DailyTrendPoint,
   CategoryCount,
   StaffPerformance,
   AssetBorrowingStats,
@@ -43,7 +45,9 @@ import {
   StaffKPIPayload,
   KPIDailyRow,
   KPITicketRow,
+  listCoordinators,
 } from "@/lib/api";
+import { INSTITUTION_ADDRESS, INSTITUTION_CONTACT } from "@/lib/institution";
 
 const KPI_CARDS: {
   key: keyof KPIReport;
@@ -103,6 +107,21 @@ const PRIORITY_LABEL: Record<string, string> = {
 const INSTITUTION_LABEL =
   process.env.NEXT_PUBLIC_INSTITUTION_NAME || "Rumah Sakit — Unit IT / SIMRS";
 
+function loadLogoAsDataUrl(): Promise<string | null> {
+  return fetch("/images/logorsih.png")
+    .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("logo"))))
+    .then(
+      (blob) =>
+        new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        })
+    )
+    .catch(() => null);
+}
+
 const PRIORITY_COLOR: Record<string, string> = {
   low: "#7C8AA3",
   medium: "#60A5FA",
@@ -127,6 +146,7 @@ export default function ReportsPage() {
   const [myAccessLevel, setMyAccessLevel] = useState<string | null>(null);
   const [report, setReport] = useState<KPIReport | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
+  const [dailyTrend, setDailyTrend] = useState<DailyTrendPoint[]>([]);
   const [priorityBreakdown, setPriorityBreakdown] = useState<Record<string, number>>({});
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryCount[]>([]);
   const [staffPerformance, setStaffPerformance] = useState<StaffPerformance[]>([]);
@@ -141,6 +161,18 @@ export default function ReportsPage() {
   const [toDate, setToDate] = useState("");
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
+  // Leader IT diambil dari role leader — dipakai sebagai penandatangan
+  // otomatis di PDF (bukan nama hardcode).
+  const [leaderName, setLeaderName] = useState("");
+
+  useEffect(() => {
+    if (!token) return;
+    listCoordinators(token)
+      .then((users) => {
+        if (users.length) setLeaderName(users[0].name);
+      })
+      .catch(() => setLeaderName(""));
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -160,9 +192,10 @@ export default function ReportsPage() {
     if (!token) return;
     setError("");
     try {
-      const [kpi, trendData, prioData, catData, staffPerfData, tickets, cats, assetData, kpiAll, kpiDetail] = await Promise.all([
+      const [kpi, trendData, dailyTrendData, prioData, catData, staffPerfData, tickets, cats, assetData, kpiAll, kpiDetail] = await Promise.all([
         getKPIReport(token, fromDate || undefined, toDate || undefined),
         getReportTrend(token, fromDate || undefined, toDate || undefined),
+        getDailyTrend(token, fromDate || undefined, toDate || undefined),
         getPriorityBreakdown(token, fromDate || undefined, toDate || undefined),
         getCategoryBreakdown(token, fromDate || undefined, toDate || undefined),
         getReportStaffPerformance(token, fromDate || undefined, toDate || undefined),
@@ -174,6 +207,7 @@ export default function ReportsPage() {
       ]);
       setReport(kpi);
       setTrend(trendData || []);
+      setDailyTrend(dailyTrendData || []);
       setPriorityBreakdown(prioData || {});
       setCategoryBreakdown(catData || []);
       setStaffPerformance(staffPerfData || []);
@@ -351,15 +385,38 @@ export default function ReportsPage() {
       const autoTable = (await import("jspdf-autotable")).default;
 
       const doc = new jsPDF();
-      doc.setFontSize(14);
-      doc.text("Laporan KPI - Ticketing IT", 14, 16);
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Periode: ${periodLabel()}`, 14, 23);
-      doc.text(`Dibuat: ${new Date().toLocaleString("id-ID")}`, 14, 28);
+      // ── Kop surat formal: logo kiri + identitas instansi + garis ganda ──
+      const logoData = await loadLogoAsDataUrl();
+      if (logoData) {
+        try {
+          doc.addImage(logoData, "PNG", 14, 12, 20, 20);
+        } catch {
+          /* logo rusak — kop tetap tampil tanpa gambar */
+        }
+      }
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(20);
+      doc.text("LAPORAN KINERJA (KPI) STAF IT", 105, 16, { align: "center" });
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(INSTITUTION_LABEL, 105, 22, { align: "center" });
+      doc.setFontSize(7);
+      doc.setTextColor(90);
+      doc.text(INSTITUTION_ADDRESS, 105, 27, { align: "center" });
+      doc.text(INSTITUTION_CONTACT, 105, 31, { align: "center" });
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.5);
+      doc.line(14, 35, 196, 35);
+      doc.setLineWidth(0.2);
+      doc.line(14, 36.5, 196, 36.5);
+      doc.setFontSize(9);
+      doc.setTextColor(60);
+      doc.text(`Periode: ${periodLabel()}`, 14, 43);
+      doc.text(`Dibuat: ${new Date().toLocaleString("id-ID")}`, 14, 48);
 
       autoTable(doc, {
-        startY: 34,
+        startY: 53,
         head: [["Metrik", "Nilai"]],
         body: KPI_CARDS.map((c) => [c.label, c.format(report[c.key])]),
         headStyles: { fillColor: [45, 212, 191] },
@@ -491,20 +548,23 @@ export default function ReportsPage() {
       }
 
       // ── Tanda tangan: Leader IT & Direktur RS ─────────────────────────
+      // Dua kolom TTD, tiap kolom di-center (bukan rata kiri) — ikuti contoh.
       const signY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
+      const pageW = doc.internal.pageSize.getWidth();
+      const marginL = 14;
+      const colW = (pageW - marginL * 2) / 2;
+      const colCenter = (i: number) => marginL + colW * i + colW / 2;
       doc.setFontSize(10);
       doc.setTextColor(20);
-      doc.text(`Mengetahui,`, 14, signY);
-      doc.text(`${INSTITUTION_LABEL}`, 110, signY);
-      doc.text("Leader IT", 14, signY + 5);
-      doc.text("Direktur RS", 110, signY + 5);
+      doc.text("Mengetahui, Leader IT", colCenter(0), signY, { align: "center" });
+      doc.text("Menetapkan, Direktur RS", colCenter(1), signY, { align: "center" });
       doc.setDrawColor(150);
-      doc.line(14, signY + 20, 90, signY + 20);
-      doc.line(110, signY + 20, 186, signY + 20);
+      doc.line(colCenter(0) - colW * 0.35, signY + 28, colCenter(0) + colW * 0.35, signY + 28);
+      doc.line(colCenter(1) - colW * 0.35, signY + 28, colCenter(1) + colW * 0.35, signY + 28);
       doc.setTextColor(100);
       doc.setFontSize(8);
-      doc.text("( ........................................ )", 14, signY + 25);
-      doc.text("( ........................................ )", 110, signY + 25);
+      doc.text(leaderName || "( ........................................ )", colCenter(0), signY + 34, { align: "center" });
+      doc.text("( ........................................ )", colCenter(1), signY + 34, { align: "center" });
 
       doc.save(`laporan-kpi-${fromDate || "semua"}-${toDate || "sekarang"}.pdf`);
     } catch {
@@ -670,22 +730,45 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Grafik tren */}
-          <div className="mb-6 rounded-lg border border-border bg-card p-6">
-            <p className="mb-4 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
-              Tren Tiket Dibuat vs Diselesaikan
-            </p>
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={trend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: "#7C8AA3", fontSize: 10 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
-                <YAxis allowDecimals={false} tick={{ fill: "#7C8AA3", fontSize: 11 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
-                <Tooltip contentStyle={chartTooltipStyle} />
-                <Legend wrapperStyle={{ fontSize: 11, color: "#7C8AA3" }} />
-                <Line type="monotone" dataKey="created" name="Dibuat" stroke="#A78BFA" strokeWidth={2} dot={{ r: 2 }} />
-                <Line type="monotone" dataKey="resolved" name="Diselesaikan" stroke="#2DD4BF" strokeWidth={2} dot={{ r: 2 }} />
-              </LineChart>
-            </ResponsiveContainer>
+          {/* Dua grafik tren berdampingan — tiket & daily task */}
+          <div className="mb-6 grid gap-6 lg:grid-cols-2">
+            <div className="rounded-lg border border-border bg-card p-6">
+              <p className="mb-4 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Tren Tiket Dibuat vs Diselesaikan
+              </p>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={trend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: "#7C8AA3", fontSize: 10 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fill: "#7C8AA3", fontSize: 11 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                  <Tooltip contentStyle={chartTooltipStyle} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: "#7C8AA3" }} />
+                  <Line type="monotone" dataKey="created" name="Dibuat" stroke="#A78BFA" strokeWidth={2} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="resolved" name="Diselesaikan" stroke="#2DD4BF" strokeWidth={2} dot={{ r: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-6">
+              <p className="mb-4 font-[family-name:var(--font-display)] text-xs uppercase tracking-wide text-text-muted">
+                Tren Daily Task Dicatat vs Selesai
+              </p>
+              {dailyTrend.length === 0 ? (
+                <div className="flex h-[260px] items-center justify-center text-xs text-text-muted">Belum ada data daily task.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={dailyTrend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: "#7C8AA3", fontSize: 10 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{ fill: "#7C8AA3", fontSize: 11 }} axisLine={{ stroke: "#1E293B" }} tickLine={false} />
+                    <Tooltip contentStyle={chartTooltipStyle} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: "#7C8AA3" }} />
+                    <Line type="monotone" dataKey="created" name="Dicatat" stroke="#38BDF8" strokeWidth={2} dot={{ r: 2 }} />
+                    <Line type="monotone" dataKey="done" name="Selesai" stroke="#34D399" strokeWidth={2} dot={{ r: 2 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
 
           {/* Dua donut chart berdampingan */}

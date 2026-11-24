@@ -34,6 +34,10 @@ export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type Ticket = {
   id: string;
   ticket_code?: string;
+  ticket_type?: "regular" | "project";
+  project_status?: string;
+  start_date?: string;
+  target_date?: string;
   title: string;
   description: string;
   category_id: string;
@@ -323,12 +327,13 @@ export type TicketSignoff = {
 
 export function listTickets(
   token: string,
-  filters?: { status?: string; reporterId?: string; assigneeId?: string }
+  filters?: { status?: string; reporterId?: string; assigneeId?: string; atRisk?: boolean }
 ) {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
   if (filters?.reporterId) params.set("reporter_id", filters.reporterId);
   if (filters?.assigneeId) params.set("assignee_id", filters.assigneeId);
+  if (filters?.atRisk) params.set("at_risk", "1");
   const query = params.toString() ? `?${params.toString()}` : "";
   return request<Ticket[]>(`/tickets${query}`, {}, token);
 }
@@ -624,6 +629,13 @@ export function reopenTicket(token: string, id: string, reason: string) {
   );
 }
 
+export type PeriodStats = {
+  total_tickets: number;
+  sla_compliance: number | null;
+  avg_resolution_minutes: number | null;
+  avg_rating: number | null;
+};
+
 export type StatsSummary = {
   total_tickets: number;
   by_status: Record<string, number>;
@@ -633,7 +645,31 @@ export type StatsSummary = {
   total_reopens: number;
   avg_rating_score: number;
   total_ratings: number;
+  period?: PeriodStats | null;
+  previous?: PeriodStats | null;
 };
+
+export type ActionItem = {
+  key: string;
+  label: string;
+  count: number;
+  href: string;
+};
+
+export function getDashboardActionItems(token: string) {
+  return request<{ items: ActionItem[] }>("/dashboard/action-items", {}, token);
+}
+
+export type UnratedTicket = {
+  id: string;
+  ticket_code: string;
+  title: string;
+  closed_at: string;
+};
+
+export function getUnratedTickets(token: string) {
+  return request<UnratedTicket[]>("/tickets/my/unrated", {}, token);
+}
 
 export type Rating = {
   id: string;
@@ -811,12 +847,28 @@ export function getKPIReport(token: string, from?: string, to?: string) {
   return request<KPIReport>(`/reports/kpi${query}`, {}, token);
 }
 
-export function getReportTrend(token: string, from?: string, to?: string) {
+export function getReportTrend(token: string, from?: string, to?: string, staffId?: string) {
   const params = new URLSearchParams();
   if (from) params.set("from", from);
   if (to) params.set("to", to);
+  if (staffId) params.set("staff_id", staffId);
   const query = params.toString() ? `?${params.toString()}` : "";
   return request<TrendPoint[]>(`/reports/trend${query}`, {}, token);
+}
+
+export type DailyTrendPoint = {
+  date: string;
+  created: number;
+  done: number;
+};
+
+export function getDailyTrend(token: string, from?: string, to?: string, staffId?: string) {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (staffId) params.set("staff_id", staffId);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request<DailyTrendPoint[]>(`/reports/daily-trend${query}`, {}, token);
 }
 
 export function getPriorityBreakdown(token: string, from?: string, to?: string) {
@@ -869,8 +921,9 @@ export function getAtRiskTickets(token: string) {
   return request<AtRiskTicket[]>("/tickets/at-risk", {}, token);
 }
 
-export function getStatsSummary(token: string) {
-  return request<StatsSummary>("/stats/summary", {}, token);
+export function getStatsSummary(token: string, days?: 7 | 30 | 90) {
+  const query = days ? `?days=${days}` : "";
+  return request<StatsSummary>(`/stats/summary${query}`, {}, token);
 }
 
 export function rateTicket(
@@ -1488,6 +1541,9 @@ export type StaffKPI = {
   daily_tasks: number;
   avg_daily_duration_minutes: number;
   avg_daily_response_minutes: number;
+  project_joined: number;
+  project_as_pic: number;
+  project_tasks_done: number;
   total_work_items: number;
 };
 
@@ -1502,6 +1558,12 @@ export type KPIOverview = {
   avg_ticket_resolution_minutes: number;
   avg_daily_duration_minutes: number;
   avg_daily_response_minutes: number;
+  total_projects: number;
+  projects_running: number;
+  projects_done: number;
+  total_project_tasks: number;
+  project_tasks_done: number;
+  active_project_members: number;
   per_unit: { unit_name: string; count: number }[];
 };
 
@@ -1552,11 +1614,31 @@ export type KPIDailyRow = {
   duration_minutes?: number;
 };
 
+export type KPIProjectRow = {
+  ticket_code: string;
+  title: string;
+  project_status: string;
+  member_role: string;
+  tasks_done: number;
+  created_at: string;
+};
+
+export type KPIProjectTaskRow = {
+  ticket_code: string;
+  project_title: string;
+  title: string;
+  milestone?: string;
+  completed_at: string;
+  weight: number;
+};
+
 export type StaffKPIDetail = {
   staff: StaffKPI;
   tickets: KPITicketRow[];
   analyzed_tickets: KPITicketRow[];
   daily_tasks: KPIDailyRow[];
+  projects: KPIProjectRow[];
+  project_tasks: KPIProjectTaskRow[];
 };
 
 export type StaffKPIDetailPayload = {
@@ -1632,4 +1714,246 @@ export async function downloadKPIExport(
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+
+// === Project (tiket tipe project) ===
+export type ProjectStatus =
+  | "draft" | "menunggu_persetujuan" | "berjalan" | "ditahan"
+  | "selesai" | "ditutup" | "dibatalkan";
+
+export type ProjectMember = {
+  id: string; ticket_id: string; user_id: string; user_name?: string;
+  role: "pic" | "member"; added_at: string; removed_at?: string;
+};
+
+export type ProjectMilestone = {
+  id: string; ticket_id: string; title: string; description?: string;
+  start_date?: string; due_date?: string;
+  status: "belum_mulai" | "berjalan" | "selesai";
+  weight: number; sort_order: number; completed_at?: string;
+  created_by: string; created_at: string; progress: number;
+};
+
+export type ProjectTask = {
+  id: string; ticket_id: string; milestone_id?: string;
+  title: string; description?: string; assignee_id?: string; assignee_name?: string;
+  due_date?: string; start_date?: string; status: "todo" | "doing" | "done";
+  weight: number; sort_order: number; completed_at?: string;
+  created_by: string; created_at: string;
+};
+
+export type ProjectProposal = {
+  id: string; ticket_id: string; doc_number?: string; file_url: string;
+  file_name: string; status: "diajukan" | "disetujui" | "ditolak";
+  version: number; notes?: string; created_at: string;
+  file_type?: string; file_size?: number; signed_by_name?: string;
+  created_by?: string; approver_id?: string | null; approved_at?: string | null;
+};
+
+export type ProjectDetail = {
+  ticket: Ticket & { ticket_type?: string; project_status?: ProjectStatus; start_date?: string; target_date?: string };
+  members: ProjectMember[];
+  milestones: ProjectMilestone[];
+  tasks: ProjectTask[];
+  proposal: ProjectProposal | null;
+  proposal_versions?: ProjectProposal[];
+  can_view_proposal?: boolean;
+  can_upload_proposal?: boolean;
+  progress: { done: number; total: number; percent: number };
+};
+
+export type ProjectDashboard = {
+  total: number; draft: number; menunggu: number; berjalan: number;
+  ditahan: number; selesai: number; total_tasks: number; done_tasks: number;
+};
+
+export type ProjectSummary = {
+  ticket: Ticket;
+  pic_name: string;
+  member_count: number;
+  milestone_count: number;
+  milestone_done: number;
+  task_count: number;
+  task_done: number;
+  progress: number;
+  proposal_version: number;
+  proposal_uploader: string;
+  late_tasks: number;
+};
+
+export function listProjects(token: string, status?: string): Promise<ProjectSummary[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return request<ProjectSummary[]>(`/projects${query}`, undefined, token);
+}
+
+export function getProjectDashboard(token: string): Promise<ProjectDashboard> {
+  return request<ProjectDashboard>("/projects/dashboard", undefined, token);
+}
+
+export function updateProject(token: string, id: string, data: {
+  title: string; description?: string; priority?: string;
+  start_date?: string; target_date?: string;
+}): Promise<Ticket> {
+  return request<Ticket>(`/projects/${id}`, {
+    method: "PATCH", body: JSON.stringify(data),
+  }, token);
+}
+
+export function deleteProject(token: string, id: string): Promise<{ message: string }> {
+  return request(`/projects/${id}`, { method: "DELETE" }, token);
+}
+
+export async function getProject(token: string, id: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/projects/${id}`, undefined, token);
+}
+
+export async function getProjectProgress(token: string, id: string): Promise<{
+  done: number; total: number; percent: number; milestones: ProjectMilestone[];
+}> {
+  return request(`/projects/${id}/progress`, undefined, token);
+}
+
+export async function createProject(token: string, data: {
+  title: string; description?: string; category_id: string; priority?: string;
+  start_date?: string; target_date?: string;
+}): Promise<Ticket> {
+  return request<Ticket>("/projects", { method: "POST", body: JSON.stringify(data) }, token);
+}
+
+export function uploadProjectProposal(token: string, id: string, file: File, signedByName: string) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("signed_by_name", signedByName);
+  return requestFormData<ProjectProposal>(`/projects/${id}/proposal/upload`, formData, token);
+}
+
+export async function submitProjectProposal(token: string, id: string, data: {
+  file_url: string; file_name: string; file_type: string; file_size: number;
+  signed_by_name: string; notes?: string;
+}) {
+  return request(`/projects/${id}/proposal`, { method: "POST", body: JSON.stringify(data) }, token);
+}
+
+// File proposal disajikan endpoint terotorisasi (bukan /uploads publik).
+// Frontend mengambil dengan header Authorization lalu membuat object URL,
+// supaya pratinjau tidak membocorkan token lewat query string.
+export async function openProjectFile(token: string, projectId: string) {
+  const res = await fetch(`${API_BASE_URL}/projects/files/${projectId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Gagal memuat file proposal");
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const name = encoded ? decodeURIComponent(encoded) : "proposal";
+  return {
+    url: URL.createObjectURL(blob),
+    file_name: name,
+    content_type: res.headers.get("content-type") || blob.type,
+  };
+}
+
+export async function decideProjectProposal(token: string, id: string, decision: "disetujui" | "ditolak", notes?: string) {
+  return request(`/projects/${id}/proposal/decision`, {
+    method: "POST", body: JSON.stringify({ decision, notes }),
+  }, token);
+}
+
+export async function setProjectStatus(token: string, id: string, status: ProjectStatus) {
+  return request(`/projects/${id}/status`, {
+    method: "POST", body: JSON.stringify({ status }),
+  }, token);
+}
+
+export async function addProjectMember(token: string, id: string, user_id: string, role: "pic" | "member") {
+  return request(`/projects/${id}/members`, {
+    method: "POST", body: JSON.stringify({ user_id, role }),
+  }, token);
+}
+
+export async function removeProjectMember(token: string, id: string, userId: string) {
+  return request(`/projects/${id}/members/${userId}`, { method: "DELETE" }, token);
+}
+
+export async function createMilestone(token: string, id: string, data: {
+  title: string; description?: string; start_date?: string; due_date?: string;
+  weight?: number; sort_order?: number;
+}): Promise<ProjectMilestone> {
+  return request(`/projects/${id}/milestones`, {
+    method: "POST", body: JSON.stringify(data),
+  }, token);
+}
+
+export async function updateMilestone(token: string, id: string, mid: string, data: {
+  title: string; description?: string; start_date?: string; due_date?: string;
+  weight?: number; sort_order?: number;
+}) {
+  return request(`/projects/${id}/milestones/${mid}`, {
+    method: "PATCH", body: JSON.stringify(data),
+  }, token);
+}
+
+export async function setMilestoneStatus(token: string, id: string, mid: string, status: string) {
+  return request(`/projects/${id}/milestones/${mid}`, {
+    method: "PATCH", body: JSON.stringify({ status }),
+  }, token);
+}
+
+export async function deleteMilestone(token: string, id: string, mid: string) {
+  return request(`/projects/${id}/milestones/${mid}`, { method: "DELETE" }, token);
+}
+
+export async function reorderMilestones(token: string, id: string, ids: string[]) {
+  return request(`/projects/${id}/milestones/reorder`, {
+    method: "POST", body: JSON.stringify({ ids }),
+  }, token);
+}
+
+export async function createProjectTask(token: string, id: string, data: {
+  title: string; description?: string; milestone_id?: string; assignee_id?: string;
+  due_date?: string; start_date?: string; weight?: number; sort_order?: number;
+}): Promise<ProjectTask> {
+  return request(`/projects/${id}/tasks`, {
+    method: "POST", body: JSON.stringify(data),
+  }, token);
+}
+
+export async function updateProjectTask(token: string, id: string, taskId: string, data: {
+  title?: string; description?: string; milestone_id?: string; assignee_id?: string | null;
+  due_date?: string | null; start_date?: string | null; weight?: number; sort_order?: number;
+}) {
+  return request(`/projects/${id}/tasks/${taskId}`, {
+    method: "PATCH", body: JSON.stringify(data),
+  }, token);
+}
+
+export async function setProjectTaskStatus(token: string, id: string, taskId: string, status: string) {
+  return request(`/projects/${id}/tasks/${taskId}/status`, {
+    method: "PATCH", body: JSON.stringify({ status }),
+  }, token);
+}
+
+export async function deleteProjectTask(token: string, id: string, taskId: string) {
+  return request(`/projects/${id}/tasks/${taskId}`, { method: "DELETE" }, token);
+}
+
+
+
+
+/** Alias kompatibilitas: dulu menerima proposalId, sekarang project ID. */
+export const fetchProjectProposalFile = openProjectFile;
+
+/** Versi tertentu dari proposal (riwayat), beda dari versi terbaru. */
+export async function fetchProjectProposalVersion(token: string, projectId: string, proposalId: string) {
+  const res = await fetch(`${API_BASE_URL}/projects/files/${projectId}?proposal_id=${encodeURIComponent(proposalId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Gagal memuat versi proposal");
+  const blob = await res.blob();
+  return {
+    url: URL.createObjectURL(blob),
+    file_name: decodeURIComponent((res.headers.get("content-disposition") || "").match(/filename\*=UTF-8''([^;]+)/i)?.[1] || "proposal"),
+    content_type: res.headers.get("content-type") || blob.type,
+  };
 }

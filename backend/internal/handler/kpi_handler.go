@@ -173,6 +173,14 @@ func (h *KPIHandler) StaffKPIExport(w http.ResponseWriter, r *http.Request) {
 	cw.Write([]string{"Rata-rata Durasi Daily Task (menit)", formatMinutes(overview.AvgDailyDurationMinutes)})
 	cw.Write([]string{"Rata-rata Respon Daily Task (menit)", formatMinutes(overview.AvgDailyResponseMinutes)})
 	cw.Write([]string{})
+	cw.Write([]string{"Ringkasan Project (terpisah dari KPI tiket)"})
+	cw.Write([]string{"Total Project", strconv.Itoa(overview.TotalProjects)})
+	cw.Write([]string{"Project Berjalan", strconv.Itoa(overview.ProjectsRunning)})
+	cw.Write([]string{"Project Selesai", strconv.Itoa(overview.ProjectsDone)})
+	cw.Write([]string{"Total Tugas Project", strconv.Itoa(overview.TotalProjectTasks)})
+	cw.Write([]string{"Tugas Project Selesai", strconv.Itoa(overview.ProjectTasksDone)})
+	cw.Write([]string{"Anggota Project Aktif", strconv.Itoa(overview.ActiveProjectMembers)})
+	cw.Write([]string{})
 
 	if len(overview.PerUnit) > 0 {
 		cw.Write([]string{"Daily Task per Unit"})
@@ -191,6 +199,7 @@ func (h *KPIHandler) StaffKPIExport(w http.ResponseWriter, r *http.Request) {
 		"Rata-rata Durasi Daily Task (menit)",
 		"Rata-rata Respon Daily Task (menit)",
 		"SLA Compliance (%)", "Reopen",
+		"Project Diikuti", "Project sbg PIC", "Tugas Project Selesai",
 	})
 	for i, k := range list {
 		cw.Write([]string{
@@ -208,6 +217,9 @@ func (h *KPIHandler) StaffKPIExport(w http.ResponseWriter, r *http.Request) {
 			formatMinutes(k.AvgDailyResponseMin),
 			fmt.Sprintf("%.1f", k.SLAComplianceRate),
 			strconv.Itoa(k.ReopenCount),
+			strconv.Itoa(k.ProjectJoined),
+			strconv.Itoa(k.ProjectAsPIC),
+			strconv.Itoa(k.ProjectTasksDone),
 		})
 	}
 

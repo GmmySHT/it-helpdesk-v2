@@ -161,10 +161,10 @@ func (r *UserRepository) ListReporters(ctx context.Context) ([]model.User, error
 		SELECT u.id, u.name, u.email, u.role, u.department, u.created_at
 		FROM users u
 		WHERE u.id IN (
-			SELECT t.created_by FROM tickets t WHERE t.deleted_at IS NULL
+			SELECT t.created_by FROM tickets t WHERE t.deleted_at IS NULL AND t.ticket_type = 'regular'
 			UNION
 			SELECT t.created_for FROM tickets t
-			WHERE t.created_for IS NOT NULL AND t.deleted_at IS NULL
+			WHERE t.created_for IS NOT NULL AND t.deleted_at IS NULL AND t.ticket_type = 'regular'
 		)
 		ORDER BY u.name
 	`

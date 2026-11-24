@@ -73,18 +73,19 @@ export function TicketsContent() {
   const [staff, setStaff] = useState<User[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [reporters, setReporters] = useState<User[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get("status") || "");
   const [staffFilter, setStaffFilter] = useState("");
   const [reporterFilter, setReporterFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [atRiskOnly, setAtRiskOnly] = useState(() => searchParams.get("at_risk") === "1");
 
   useEffect(() => {
-    if (searchParams.get("create") === "1") {
-      setShowForm(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (searchParams.get("create") === "1") setShowForm(true);
+    const qs = searchParams.get("status") || "";
+    setStatusFilter(qs);
+    setAtRiskOnly(searchParams.get("at_risk") === "1");
+  }, [searchParams]);
   const [error, setError] = useState("");
 
   const [title, setTitle] = useState("");
@@ -108,14 +109,23 @@ export function TicketsContent() {
   async function loadTickets() {
     if (!token) return;
     try {
-      // Filter pelapor & pengerja dikirim ke server, bukan disaring di browser:
-      // daftar tiket bisa besar dan ListForUser (role user) sudah dibatasi server.
-      const data = await listTickets(token, {
-        status: statusFilter || undefined,
-        reporterId: reporterFilter || undefined,
-        assigneeId: staffFilter || undefined,
-      });
-      setTickets(data || []);
+      if (atRiskOnly) {
+        // Filter di server memakai WHERE yang sama dengan hitungan kartu,
+        // jadi tiket di halaman lain tidak hilang dan jumlahnya identik.
+        const data = await listTickets(token, {
+          atRisk: true,
+          reporterId: reporterFilter || undefined,
+          assigneeId: staffFilter || undefined,
+        });
+        setTickets(data || []);
+      } else {
+        const data = await listTickets(token, {
+          status: statusFilter || undefined,
+          reporterId: reporterFilter || undefined,
+          assigneeId: staffFilter || undefined,
+        });
+        setTickets(data || []);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat tiket");
     }
@@ -125,7 +135,7 @@ export function TicketsContent() {
     if (!token) return;
     loadTickets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, statusFilter, reporterFilter, staffFilter]);
+  }, [token, statusFilter, reporterFilter, staffFilter, atRiskOnly]);
 
   // Data pendukung (kategori, daftar staf, daftar pelapor) tidak bergantung
   // pada filter — dimuat sekali per sesi, bukan setiap kali filter berubah.

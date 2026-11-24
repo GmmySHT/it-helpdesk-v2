@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,4 +65,47 @@ func (r *RatingRepository) AverageScore(ctx context.Context) (float64, int, erro
 	err := r.db.QueryRow(ctx, `SELECT COALESCE(AVG(score), 0), COUNT(*) FROM ratings`).
 		Scan(&avg, &count)
 	return avg, count, err
+}
+
+// UnratedTicket adalah tiket closed milik pemanggil yang belum dinilai.
+// Dipakai dashboard pelapor agar tidak perlu N+1 getRating per tiket.
+type UnratedTicket struct {
+	ID       string     `json:"id"`
+	Code     *string    `json:"ticket_code"`
+	Title    string     `json:"title"`
+	ClosedAt *time.Time `json:"closed_at"`
+}
+
+func (r *RatingRepository) ListUnratedClosedByCreator(ctx context.Context, userID string, limit int) ([]UnratedTicket, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT t.id, t.ticket_code, t.title, t.closed_at
+		FROM tickets t
+		LEFT JOIN ratings r ON r.ticket_id = t.id
+		WHERE t.deleted_at IS NULL
+		  AND t.ticket_type = 'regular'
+		  AND t.status = 'closed'
+		  AND (t.created_by = $1 OR t.created_for = $1)
+		  AND r.id IS NULL
+		  -- Tiket yang ditolak langsung closed tanpa pernah resolve; bukan kandidat rating.
+		  AND t.last_resolved_at IS NOT NULL
+		ORDER BY t.closed_at DESC NULLS LAST
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []UnratedTicket
+	for rows.Next() {
+		var t UnratedTicket
+		if err := rows.Scan(&t.ID, &t.Code, &t.Title, &t.ClosedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }

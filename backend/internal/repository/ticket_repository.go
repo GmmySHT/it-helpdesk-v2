@@ -65,14 +65,16 @@ func (r *TicketRepository) Create(ctx context.Context, t *model.Ticket) error {
 	query := `
 		INSERT INTO tickets (
 			ticket_code, title, description, category_id, priority, status,
-			created_by, created_for, assigned_to, assigned_by, assigned_at, sla_deadline
+			created_by, created_for, assigned_to, assigned_by, assigned_at, sla_deadline,
+			ticket_type, project_status, start_date, target_date
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, reopen_count, created_at
 	`
 	err = tx.QueryRow(ctx, query,
 		t.TicketCode, t.Title, t.Description, t.CategoryID, t.Priority, t.Status,
 		t.CreatedBy, t.CreatedFor, t.AssignedTo, t.AssignedBy, t.AssignedAt, t.SLADeadline,
+		t.TicketType, t.ProjectStatus, t.StartDate, t.TargetDate,
 	).Scan(&t.ID, &t.ReopenCount, &t.CreatedAt)
 	if err != nil {
 		return err
@@ -93,6 +95,7 @@ const ticketListSelect = `
 		t.assigned_to, assignee.name, t.assigned_by, t.assigned_at,
 		t.claimed_by, claimer.name, t.claimed_at, t.claim_type,
 		t.sla_deadline, t.last_resolved_at, t.reopen_count,
+		t.ticket_type, t.project_status, t.start_date, t.target_date,
 		t.closed_by, closer.name, t.closed_at, t.created_at,
 	EXISTS (SELECT 1 FROM ticket_signoffs s WHERE s.ticket_id = t.id) AS has_signoff
 	FROM tickets t
@@ -123,6 +126,7 @@ type TicketFilter struct {
 	Status     string
 	ReporterID string
 	AssigneeID string
+	AtRisk     bool
 }
 
 // buildFilterClause menyusun potongan WHERE + args secara berurutan, supaya
@@ -147,6 +151,10 @@ func (f TicketFilter) buildFilterClause(startIdx int) (string, []interface{}) {
 		clause += " AND (t.claimed_by = $" + itoa(idx) + " OR t.assigned_to = $" + itoa(idx) + ")"
 		args = append(args, f.AssigneeID)
 	}
+	if f.AtRisk {
+		// Sumber kebenaran yang sama dengan count kartu & widget at-risk.
+		clause += " AND " + ticketListAtRiskWhere
+	}
 	return clause, args
 }
 
@@ -155,7 +163,7 @@ func itoa(n int) string {
 }
 
 func (r *TicketRepository) ListFiltered(ctx context.Context, f TicketFilter) ([]model.Ticket, error) {
-	query := ticketListSelect + " WHERE t.deleted_at IS NULL"
+	query := ticketListSelect + " WHERE t.deleted_at IS NULL AND (t.ticket_type = 'regular' OR t.ticket_type IS NULL)"
 	clause, args := f.buildFilterClause(0)
 	query += clause + " ORDER BY t.created_at DESC"
 	return r.queryTickets(ctx, query, args...)
@@ -183,6 +191,7 @@ func (r *TicketRepository) queryTickets(ctx context.Context, query string, args 
 			&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 			&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
 			&t.SLADeadline, &t.LastResolvedAt, &t.ReopenCount,
+			&t.TicketType, &t.ProjectStatus, &t.StartDate, &t.TargetDate,
 			&t.ClosedBy, &t.ClosedByName, &t.ClosedAt, &t.CreatedAt,
 			&t.HasSignoff,
 		); err != nil {
@@ -201,6 +210,7 @@ func (r *TicketRepository) ListForUser(ctx context.Context, f TicketFilter, user
 	query := ticketListSelect + `
 		WHERE (t.created_by = $1 OR t.created_for = $1)
 		AND t.deleted_at IS NULL
+		AND (t.ticket_type = 'regular' OR t.ticket_type IS NULL)
 	`
 	args := []interface{}{userID}
 	clause, extra := f.buildFilterClause(1)
@@ -221,6 +231,7 @@ func (r *TicketRepository) FindByID(ctx context.Context, id string) (*model.Tick
 		&t.AssignedTo, &t.AssignedToName, &t.AssignedBy, &t.AssignedAt,
 		&t.ClaimedBy, &t.ClaimedByName, &t.ClaimedAt, &t.ClaimType,
 		&t.SLADeadline, &t.LastResolvedAt, &t.ReopenCount,
+		&t.TicketType, &t.ProjectStatus, &t.StartDate, &t.TargetDate,
 		&t.ClosedBy, &t.ClosedByName, &t.ClosedAt, &t.CreatedAt,
 		&t.HasSignoff,
 	)
@@ -346,12 +357,20 @@ type AtRiskTicket struct {
 // dan punya deadline, diurutkan dari yang PALING mendesak (deadline
 // terdekat/sudah lewat duluan) — supaya yang paling butuh perhatian
 // muncul di paling atas.
+// ticketListAtRiskWhere adalah satu-satunya definisi "tiket berisiko".
+// Dipakai bersama oleh ListAtRisk (daftar) dan DashboardRepository
+// (hitungan) supaya angka kartu tidak pernah berbeda dari isi daftarnya.
+const ticketListAtRiskWhere = `t.deleted_at IS NULL
+	AND t.ticket_type = 'regular'
+	AND t.status NOT IN ('resolved', 'closed')
+	AND t.sla_deadline IS NOT NULL`
+
 func (r *TicketRepository) ListAtRisk(ctx context.Context, limit int) ([]AtRiskTicket, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, title, status, sla_deadline
-		FROM tickets
-		WHERE status NOT IN ('resolved', 'closed') AND sla_deadline IS NOT NULL
-		ORDER BY sla_deadline ASC
+		SELECT t.id, t.title, t.status, t.sla_deadline
+		FROM tickets t
+		WHERE `+ticketListAtRiskWhere+`
+		ORDER BY t.sla_deadline ASC
 		LIMIT $1
 	`, limit)
 	if err != nil {
@@ -403,6 +422,7 @@ func (r *TicketRepository) ListSLACandidates(ctx context.Context) ([]model.Ticke
 			assigned_to, claimed_by, sla_deadline, sla_reminder_sent_at, sla_overdue_notified_at
 		FROM tickets
 		WHERE status NOT IN ('resolved', 'closed') AND sla_deadline IS NOT NULL
+		  AND ticket_type = 'regular'
 	`)
 	if err != nil {
 		return nil, err

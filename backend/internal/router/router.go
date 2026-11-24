@@ -43,7 +43,7 @@ type Options struct {
 // TicketService dikembalikan juga (bukan cuma http.Handler) supaya main.go
 // bisa memakainya untuk menjalankan background job (reminder SLA) di luar
 // siklus request HTTP biasa.
-func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (http.Handler, *service.TicketService) {
+func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (http.Handler, *service.TicketService, *service.ProjectService) {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
@@ -57,9 +57,9 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 	r.Use(appmiddleware.LimitBody(1<<20, 50<<20)) // JSON maks 1 MB, upload maks 50 MB
 
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   opts.AllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowedOrigins: opts.AllowedOrigins,
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type"},
 		// Content-Disposition perlu dibaca JS agar nama file unduhan (mis.
 		// "kpi-budi-20261101_20261130.csv") dipakai apa adanya. Tanpa ini
 		// browser menyembunyikan header tersebut dan file tersimpan dengan
@@ -99,6 +99,11 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 	ticketService := service.NewTicketService(db, ticketRepo, slaRuleRepo, commentRepo, userRepo, notifService)
 	ticketHandler := handler.NewTicketHandler(ticketService)
 
+	// Modul Project — alur terpisah dari tiket regular, pakai RBAC module 'project'.
+	projectRepo := repository.NewProjectRepository(db)
+	projectService := service.NewProjectService(projectRepo, ticketRepo, userRepo, notifService)
+	projectHandler := handler.NewProjectHandler(projectService)
+
 	categoryRepo := repository.NewCategoryRepository(db)
 	categoryHandler := handler.NewCategoryHandler(categoryRepo)
 
@@ -129,6 +134,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 
 	ratingRepo := repository.NewRatingRepository(db)
 	ratingHandler := handler.NewRatingHandler(ratingRepo, ticketRepo)
+
+	// Ringkasan "perlu tindakan" untuk dashboard (gabungan, izin-aware).
+	dashboardRepo := repository.NewDashboardRepository(db)
+	dashboardHandler := handler.NewDashboardHandler(permissionRepo, dashboardRepo)
 
 	commentHandler := handler.NewCommentHandler(commentRepo, ticketRepo, userRepo, notifService)
 	uploadHandler := handler.NewUploadHandler()
@@ -188,6 +197,42 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Patch("/tickets/{id}/deadline", ticketHandler.UpdateDeadline)
 			r.Patch("/tickets/{id}/analysis", ticketHandler.UpdateAnalysis)
 
+			// Modul Project — jalur terpisah dari alur tiket regular.
+			// Baca butuh level view; tulis butuh editor. Keputusan proposal
+			// dibatasi leader/admin (meski RBAC memberi editor ke role lain).
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "project", model.AccessView))
+				r.Get("/projects", projectHandler.List)
+				r.Get("/projects/dashboard", projectHandler.Dashboard)
+				r.Get("/projects/files/{pid}", handler.NewProjectFileHandler(projectService, "./uploads").ServeHTTP)
+				r.Get("/projects/{id}", projectHandler.Get)
+				r.Get("/projects/{id}/progress", projectHandler.Progress)
+				r.Get("/projects/{id}/milestones", projectHandler.ListMilestones)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "project", model.AccessEditor))
+				r.Post("/projects", projectHandler.Create)
+				r.Patch("/projects/{id}", projectHandler.Update)
+				r.Delete("/projects/{id}", projectHandler.Delete)
+				r.Post("/projects/{id}/proposal", projectHandler.SubmitProposal)
+				r.Post("/projects/{id}/proposal/upload", projectHandler.UploadProposal)
+				r.Post("/projects/{id}/status", projectHandler.SetStatus)
+				r.Post("/projects/{id}/members", projectHandler.AddMember)
+				r.Delete("/projects/{id}/members/{userId}", projectHandler.RemoveMember)
+				r.Post("/projects/{id}/milestones", projectHandler.CreateMilestone)
+				r.Patch("/projects/{id}/milestones/{mid}", projectHandler.UpdateMilestone)
+				r.Delete("/projects/{id}/milestones/{mid}", projectHandler.DeleteMilestone)
+				r.Post("/projects/{id}/milestones/reorder", projectHandler.ReorderMilestones)
+				r.Post("/projects/{id}/tasks", projectHandler.CreateTask)
+				r.Patch("/projects/{id}/tasks/{taskId}", projectHandler.UpdateTask)
+				r.Delete("/projects/{id}/tasks/{taskId}", projectHandler.DeleteTask)
+				r.Patch("/projects/{id}/tasks/{taskId}/status", projectHandler.UpdateTaskStatus)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireRole(model.RoleLeader, model.RoleAdmin))
+				r.Post("/projects/{id}/proposal/decision", projectHandler.DecideProposal)
+			})
+
 			// Edit detail tiket (judul/deskripsi/kategori/prioritas) — izin
 			// dinamis via RBAC modul ticketing level editor. Default:
 			// it_support/analyst/programmer/devops/leader/admin editor,
@@ -202,10 +247,10 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Get("/categories", categoryHandler.List)
 			r.Patch("/categories/{id}/approval-gate", categoryHandler.UpdateApprovalGate)
 			r.Get("/users/staff", userHandler.ListStaff)
-		// Daftar pelapor (role user) untuk dropdown filter di daftar tiket.
-		// Semua role yang login boleh membaca — hanya nama & departemen.
-		r.Get("/users/reporters", userHandler.ListReporters)
-	r.Get("/users/coordinators", userHandler.ListCoordinators)
+			// Daftar pelapor (role user) untuk dropdown filter di daftar tiket.
+			// Semua role yang login boleh membaca — hanya nama & departemen.
+			r.Get("/users/reporters", userHandler.ListReporters)
+			r.Get("/users/coordinators", userHandler.ListCoordinators)
 
 			// Manajemen User — HANYA leader/admin. Ini sengaja pakai
 			// RequireRole (bukan RequireModuleAccess seperti Laporan/Akses)
@@ -214,22 +259,22 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			// lewat RBAC.
 			r.Group(func(r chi.Router) {
 				r.Use(appmiddleware.RequireRole(model.RoleLeader, model.RoleAdmin))
-					r.Get("/admin/users", userHandler.ListAll)
-					r.Post("/admin/users", userHandler.Create)
-					r.Put("/admin/users/{id}", userHandler.Update)
-					r.Patch("/admin/users/{id}/status", userHandler.SetActive)
-					// Reset password akun LAIN (kasus lupa password). Hierarki
-					// role divalidasi di service: leader hanya boleh akun
-					// user/staff_it, akun leader/admin hanya oleh admin.
-					r.Put("/admin/users/{id}/password", userHandler.ResetPassword)
-					r.Delete("/admin/users/{id}", userHandler.Delete)
-				})
+				r.Get("/admin/users", userHandler.ListAll)
+				r.Post("/admin/users", userHandler.Create)
+				r.Put("/admin/users/{id}", userHandler.Update)
+				r.Patch("/admin/users/{id}/status", userHandler.SetActive)
+				// Reset password akun LAIN (kasus lupa password). Hierarki
+				// role divalidasi di service: leader hanya boleh akun
+				// user/staff_it, akun leader/admin hanya oleh admin.
+				r.Put("/admin/users/{id}/password", userHandler.ResetPassword)
+				r.Delete("/admin/users/{id}", userHandler.Delete)
+			})
 
-				// Ticket soft delete + log — hanya admin
-				r.Group(func(r chi.Router) {
-					r.Use(appmiddleware.RequireRole(model.RoleAdmin))
-					r.Delete("/admin/tickets/{id}", ticketHandler.SoftDelete)
-					r.Get("/admin/tickets/deleted", ticketHandler.ListDeleted)
+			// Ticket soft delete + log — hanya admin
+			r.Group(func(r chi.Router) {
+				r.Use(appmiddleware.RequireRole(model.RoleAdmin))
+				r.Delete("/admin/tickets/{id}", ticketHandler.SoftDelete)
+				r.Get("/admin/tickets/deleted", ticketHandler.ListDeleted)
 			})
 			// Statistik tim & tiket berisiko: hanya staff IT, leader, admin.
 			// Role 'user' (pelapor) tidak punya alasan melihat data tim.
@@ -245,6 +290,12 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 			r.Get("/stats/my-status-breakdown", statsHandler.MyStatusBreakdown)
 			r.Get("/stats/my-trend", statsHandler.MyTrend)
 			r.Get("/stats/my-priority-breakdown", statsHandler.MyPriorityBreakdown)
+
+			// Ringkasan "perlu tindakan" dashboard. Auth saja; isi difilter
+			// per predikat izin aksi aslinya di dalam handler.
+			r.Get("/dashboard/action-items", dashboardHandler.ActionItems)
+			// Tiket closed milik pemanggil yang belum diberi rating (anti N+1).
+			r.Get("/tickets/my/unrated", ratingHandler.MyUnrated)
 			r.Group(func(r chi.Router) {
 				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "monitoring", model.AccessView))
 				r.Get("/monitoring", monitoringHandler.GetDashboard)
@@ -264,6 +315,7 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 				r.Use(appmiddleware.RequireModuleAccess(permissionRepo, "reports", model.AccessView))
 				r.Get("/reports/kpi", statsHandler.KPIReport)
 				r.Get("/reports/trend", statsHandler.TrendRange)
+				r.Get("/reports/daily-trend", statsHandler.DailyTrendRange)
 				r.Get("/reports/priority-breakdown", statsHandler.PriorityBreakdown)
 				r.Get("/reports/category-breakdown", statsHandler.CategoryBreakdown)
 				r.Get("/reports/staff-performance", statsHandler.StaffPerformanceRange)
@@ -385,5 +437,5 @@ func New(db *pgxpool.Pool, simrsDB *pgxpool.Pool, hub *ws.Hub, opts Options) (ht
 		})
 	})
 
-	return r, ticketService
+	return r, ticketService, projectService
 }

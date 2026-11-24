@@ -522,10 +522,55 @@ select option:checked {
 }
 
 /* ==========================================================================
+   Kop surat formal untuk halaman cetak (KPI, BAST, persetujuan analisa).
+   Logo kiri + identitas instansi tengah + garis ganda bawah.
+   ========================================================================== */
+.report-letterhead {
+  margin-bottom: 1.25rem;
+}
+.report-letterhead-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.report-letterhead-logo {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  object-fit: contain;
+}
+.report-letterhead-identity {
+  flex: 1;
+  text-align: center;
+  color: #000;
+}
+.report-letterhead-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.report-letterhead-institution {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.report-letterhead-meta {
+  margin: 0.05rem 0 0;
+  font-size: 0.7rem;
+}
+.report-letterhead-rule {
+  margin-top: 0.6rem;
+  border-top: 2px solid #000;
+}
+.report-letterhead-rule.thin {
+  margin-top: 2px;
+  border-top: 1px solid #000;
+}
+
+/* ==========================================================================
    Cetak dokumen (BAST tiket)
-   Halaman /tickets/[id]/print adalah dokumen kertas, bukan bagian aplikasi.
-   Saat dicetak: latar aurora/particle dimatikan, toolbar "no-print"
-   disembunyikan, dan warna paksa hitam-putih supaya hemat tinta & terbaca.
    ========================================================================== */
 @media print {
   @page {

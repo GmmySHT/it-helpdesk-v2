@@ -17,13 +17,62 @@ func NewStatsHandler(statsRepo *repository.StatsRepository) *StatsHandler {
 	return &StatsHandler{statsRepo: statsRepo}
 }
 
+// Summary mengembalikan angka ringkas dashboard. Tanpa parameter, respons
+// PERSIS seperti sebelumnya (semua field lama tidak berubah). Dengan
+// ?days=7|30|90, ditambahkan blok period + previous untuk menghitung delta.
 func (h *StatsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	summary, err := h.statsRepo.GetSummary(r.Context())
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal menghitung statistik")
 		return
 	}
+
+	if v := r.URL.Query().Get("days"); v != "" {
+		days, ok := parseTrendDays(v)
+		if !ok {
+			respondError(w, http.StatusBadRequest, "parameter days harus 7, 30, atau 90")
+			return
+		}
+
+		// Pakai WIB supaya batas "N hari terakhir" sejajar dengan
+		// generate_series di GetTrend yang juga memakai Asia/Jakarta.
+		jakarta := time.FixedZone("WIB", 7*60*60)
+		nowLocal := time.Now().In(jakarta)
+		midnight := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, jakarta)
+		currentFrom := midnight.AddDate(0, 0, -days)
+		previousFrom := midnight.AddDate(0, 0, -2*days)
+		now := midnight.AddDate(0, 0, 1)
+
+		current, err := h.statsRepo.GetSummaryPeriod(r.Context(), currentFrom, now)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "gagal menghitung statistik periode")
+			return
+		}
+		previous, err := h.statsRepo.GetSummaryPeriod(r.Context(), previousFrom, currentFrom)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "gagal menghitung statistik pembanding")
+			return
+		}
+		summary.Period = &current
+		summary.Previous = &previous
+	}
+
 	respondJSON(w, http.StatusOK, summary)
+}
+
+// parseTrendDays memvalidasi parameter days untuk endpoint tren. Nilai di
+// luar daftar ditolak, BUKAN diam-diam jatuh ke default — supaya permintaan
+// yang salah tidak menghasilkan grafik yang menyesatkan.
+func parseTrendDays(v string) (int, bool) {
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, false
+	}
+	switch parsed {
+	case 7, 30, 90:
+		return parsed, true
+	}
+	return 0, false
 }
 
 func (h *StatsHandler) StaffPerformance(w http.ResponseWriter, r *http.Request) {
@@ -75,14 +124,17 @@ func (h *StatsHandler) MyCreatorStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // Trend dipakai grafik tren dashboard leader — jumlah tiket dibuat vs
-// diselesaikan per hari, N hari terakhir (default 7, maksimal dibatasi
-// 30 supaya query generate_series tidak dipakai berlebihan).
+// diselesaikan per hari. Rentang yang diizinkan hanya 7, 30, atau 90 hari
+// (default 7); nilai lain ditolak 400.
 func (h *StatsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	days := 7
 	if v := r.URL.Query().Get("days"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 30 {
-			days = parsed
+		parsed, ok := parseTrendDays(v)
+		if !ok {
+			respondError(w, http.StatusBadRequest, "parameter days harus 7, 30, atau 90")
+			return
 		}
+		days = parsed
 	}
 
 	points, err := h.statsRepo.GetTrend(r.Context(), days)
@@ -155,6 +207,29 @@ func (h *StatsHandler) TrendRange(w http.ResponseWriter, r *http.Request) {
 	points, err := h.statsRepo.GetTrendRange(r.Context(), fromVal, toVal, staffID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "gagal mengambil data tren")
+		return
+	}
+	respondJSON(w, http.StatusOK, points)
+}
+
+// DailyTrendRange = versi TrendRange untuk daily task. Ikut rentang & scope
+// staf yang sama, supaya grafik daily task selaras dengan grafik tiket.
+func (h *StatsHandler) DailyTrendRange(w http.ResponseWriter, r *http.Request) {
+	from, to := parseDateRange(r)
+	staffID, _ := resolveStaffScope(r)
+
+	toVal := time.Now()
+	if to != nil {
+		toVal = *to
+	}
+	fromVal := toVal.AddDate(0, 0, -29)
+	if from != nil {
+		fromVal = *from
+	}
+
+	points, err := h.statsRepo.GetDailyTrendRange(r.Context(), fromVal, toVal, staffID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "gagal mengambil data tren daily task")
 		return
 	}
 	respondJSON(w, http.StatusOK, points)

@@ -60,6 +60,12 @@ function BorrowingsContent() {
 
   const refetch = async (statusFilter: string) => {
     if (!token) return;
+    if (statusFilter === "overdue") {
+      const overduesRes = await listOverdueBorrowings(token);
+      setBorrowings(overduesRes || []);
+      setOverdues(overduesRes || []);
+      return;
+    }
     const [borrowingsRes, overduesRes] = await Promise.all([
       listBorrowings(token, statusFilter || undefined, canManage ? undefined : user?.id, 100),
       canManage ? listOverdueBorrowings(token) : Promise.resolve([]),
@@ -199,6 +205,7 @@ function BorrowingsContent() {
                   { key: "pending_approval", label: "Perlu Persetujuan" },
                   { key: "borrowed", label: "Dipinjam" },
                   { key: "returned", label: "Selesai" },
+                  { key: "overdue", label: "Terlambat" },
                 ].map((f) => (
                   <button
                     key={f.key}
