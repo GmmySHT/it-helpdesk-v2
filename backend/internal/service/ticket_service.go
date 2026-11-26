@@ -148,6 +148,7 @@ func (s *TicketService) Create(ctx context.Context, input CreateTicketInput) (*m
 		CreatedBy:   input.CreatedBy,
 		CreatedFor:  input.CreatedFor,
 		Status:      model.StatusUnassigned,
+		TicketType:  model.TicketTypeRegular,
 	}
 
 	// Jika dibuat oleh leader/admin (atas nama user atau untuk tim), tidak perlu approval
